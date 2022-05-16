@@ -2270,6 +2270,8 @@ PREDEFINED             = __DOXYGEN__ \
                          CONFIG_FPU_SHARING \
                          CONFIG_GDBSTUB \
                          CONFIG_HEAP_MEM_POOL_SIZE \
+                         CONFIG_I3C_USE_GROUP_ADDR \
+                         CONFIG_I3C_USE_IBI \
                          CONFIG_MMU \
                          CONFIG_NET_L2_ETHERNET_MGMT \
                          CONFIG_NET_MGMT_EVENT \
