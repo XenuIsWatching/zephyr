@@ -1,0 +1,91 @@
+# I3C configuration options
+#
+# Copyright (c) 2022 Intel Corporation
+#
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig I3C
+	bool "I3C Drivers"
+	help
+	  Enable I3C Driver Configuration
+
+if I3C
+
+module = I3C
+module-str = i3c
+source "subsys/logging/Kconfig.template.log_config"
+
+config I3C_USE_GROUP_ADDR
+	bool "Use Group Addresses"
+	default y
+	help
+	  Enable this to use group addresses if supported
+	  by the controllers and target devices.
+
+	  Says Y if unsure.
+
+config I3C_USE_IBI
+	bool "Use In-Band Interrupt (IBI)"
+	default y
+	help
+	  Enable this to use In-Band Interrupt (IBI).
+
+	  Says Y if unsure.
+
+config I3C_IBI_MAX_PAYLOAD_SIZE
+	int "Maximum IBI Payload Size"
+	depends on I3C_USE_IBI
+	default 16
+	help
+	  Maxmium IBI payload size.
+
+comment "Initialization Priority"
+
+config I3C_CONTROLLER_INIT_PRIORITY
+	int "I3C Controller Init Priority"
+	# Default is just after CONFIG_KERNEL_INIT_PRIORITY_DEVICE
+	default 50
+	help
+	  This is for setting up I3C controller device driver instance
+	  so device driver instances for I2C and I3C devices on
+	  the same bus can register themselves with the I3C controller
+	  instance.
+
+	  Device driver may initialize the hardware at this point, or
+	  choose to do so during bus initialization.
+
+config I3C_DEV_REGISTER_INIT_PRIORITY
+	int "I3C Device Registration Init Priority"
+	default 60
+	help
+	 This init priotiry for device driver instances for I2C and I3C
+	 devices on the I3C bus to register themselves to the I3C
+	 controller instance.
+
+	 This needs to be done after CONFIG_I3C_CONTROLLER_INIT_PRIORITY
+	 as the controller device driver instances need to prepare
+	 internal data structures to accommodate device registration.
+
+config I3C_BUS_INIT_PRIORITY
+	int "I3C Bus Init Priority"
+	# Default is before CONFIG_SENSOR_INIT_PRIORITY
+	# as common I3C devices are sensors at the moment.
+	default 70
+	help
+	  This init priority is for I3C controller device driver
+	  instances to initialize the I3C bus (e.g. dynamic address
+	  assignment).
+
+	  This needs to be after CONFIG_I3C_DEV_REGISTER_INIT_PRIORITY
+	  so the controller device driver instance knows how many
+	  devices are connected on the bus.
+
+	  Note that this needs to be done before the device driver
+	  instances of the connected I2C and I3C devices start
+	  initializing those devices. This is because some devices
+	  may not be addressable until addresses are assigned by
+	  the controller.
+
+comment "Device Drivers"
+
+endif # I3C
