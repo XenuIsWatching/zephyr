@@ -204,4 +204,16 @@
 		};
 	};
 
+	pinmux_i3c: pinmux_i3c {
+		group0 {
+			pinmux = <I3C0_SCL_PIO2_29>,
+				<I3C0_SDA_PIO2_30>,
+				<I3C0_PUR_PIO2_31>;
+			bias-pull-up;
+			input-enable;
+			slew-rate = "normal";
+			drive-strength = "high";
+			drive-open-drain;
+		};
+	};
 };
