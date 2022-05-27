@@ -88,4 +88,6 @@ config I3C_BUS_INIT_PRIORITY
 
 comment "Device Drivers"
 
+rsource "Kconfig.nxp"
+
 endif # I3C

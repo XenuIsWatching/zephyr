@@ -10,3 +10,8 @@ zephyr_library_sources_ifdef(
   CONFIG_USERSPACE
   i3c_handlers.c
 )
+
+zephyr_library_sources_ifdef(
+  CONFIG_I3C_MCUX
+  i3c_mcux.c
+)
