@@ -14,6 +14,7 @@
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/types.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/i3c.h>
 #include <zephyr/drivers/spi.h>
 #include <zephyr/sys/util.h>
 #include <stmemsc.h>
@@ -49,6 +50,9 @@ struct lsm6dso_config {
 #if DT_ANY_INST_ON_BUS_STATUS_OKAY(spi)
 		const struct spi_dt_spec spi;
 #endif
+#if DT_ANY_INST_ON_BUS_STATUS_OKAY(i3c)
+		struct i3c_device_desc *i3c;
+#endif
 	} stmemsc_cfg;
 	uint8_t accel_pm;
 	uint8_t accel_odr;
@@ -63,6 +67,10 @@ struct lsm6dso_config {
 	uint8_t int_pin;
 	bool trig_enabled;
 #endif /* CONFIG_LSM6DSO_TRIGGER */
+
+#if DT_ANY_INST_ON_BUS_STATUS_OKAY(i3c)
+	bool on_i3c_bus;
+#endif
 };
 
 union samples {
@@ -117,6 +125,10 @@ struct lsm6dso_data {
 	struct k_work work;
 #endif
 #endif /* CONFIG_LSM6DSO_TRIGGER */
+
+#if DT_ANY_INST_ON_BUS_STATUS_OKAY(i3c)
+	struct i3c_device_desc i3c;
+#endif
 };
 
 #if defined(CONFIG_LSM6DSO_SENSORHUB)

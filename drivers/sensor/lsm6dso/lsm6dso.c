@@ -727,9 +727,15 @@ static int lsm6dso_init_chip(const struct device *dev)
 		return -EIO;
 	}
 
-	/* I3C disable stay preserved after s/w reset */
-	if (lsm6dso_i3c_disable_set(ctx, LSM6DSO_I3C_DISABLE) < 0) {
-		LOG_DBG("Failed to disable I3C");
+	/* I3C enable/disable stay preserved after s/w reset */
+	lsm6dso_i3c_disable_t i3c_dis = LSM6DSO_I3C_DISABLE;
+#if DT_ANY_INST_ON_BUS_STATUS_OKAY(i3c)
+	if (cfg->on_i3c_bus) {
+		i3c_dis = LSM6DSO_I3C_ENABLE_T_50us;
+	}
+#endif
+	if (lsm6dso_i3c_disable_set(ctx, i3c_dis) < 0) {
+		LOG_DBG("Failed to set I3C enable/disable");
 		return -EIO;
 	}
 
@@ -936,16 +942,65 @@ static int lsm6dso_init(const struct device *dev)
 	}
 
 /*
+ * Instantiation macros used when a device is on an I2C bus.
+ */
+
+#define LSM6DSO_DATA_I3C(inst)						\
+	{								\
+		.i3c = I3C_DEVICE_DESC_DT_INST(inst),			\
+	}
+
+#define LSM6DSO_CONFIG_I3C(inst)					\
+	{								\
+		.ctx = {						\
+			.read_reg =					\
+			   (stmdev_read_ptr) stmemsc_i3c_read,		\
+			.write_reg =					\
+			   (stmdev_write_ptr) stmemsc_i3c_write,	\
+			.handle =					\
+			   (void *)&lsm6dso_config_##inst.stmemsc_cfg,	\
+		},							\
+		.stmemsc_cfg = {					\
+			.i3c = &lsm6dso_data_##inst.i3c,		\
+		},							\
+		.on_i3c_bus = true,					\
+		LSM6DSO_CONFIG_COMMON(inst)				\
+	}
+
+#if DT_ANY_INST_ON_BUS_STATUS_OKAY(i3c)
+static int lsm6dso_i3c_dev_reg(const struct device *dev)
+{
+	struct lsm6dso_data *data = dev->data;
+	struct i3c_device_desc *target = &data->i3c;
+
+	i3c_device_register(target);
+
+	return 0;
+}
+
+#define LSM6DSO_I3C_DEV_REG(inst)					\
+	I3C_DEVICE_REGISTER_INIT(lsm6dso_i3c_dev_reg,			\
+				 DEVICE_DT_INST_GET(inst));
+#endif
+
+/*
  * Main instantiation macro. Use of COND_CODE_1() selects the right
  * bus-specific macro at preprocessor time.
  */
 
 #define LSM6DSO_DEFINE(inst)						\
-	static struct lsm6dso_data lsm6dso_data_##inst;			\
+	static struct lsm6dso_data lsm6dso_data_##inst			\
+		IF_ENABLED(DT_INST_ON_BUS(inst, i3c),			\
+			 (= LSM6DSO_DATA_I3C(inst)))			\
+		;							\
 	static const struct lsm6dso_config lsm6dso_config_##inst =	\
 		COND_CODE_1(DT_INST_ON_BUS(inst, spi),			\
 			(LSM6DSO_CONFIG_SPI(inst)),			\
-			(LSM6DSO_CONFIG_I2C(inst)));			\
-	LSM6DSO_DEVICE_INIT(inst)
+			(COND_CODE_1(DT_INST_ON_BUS(inst, i3c),		\
+				(LSM6DSO_CONFIG_I3C(inst)),		\
+				(LSM6DSO_CONFIG_I2C(inst)))));		\
+	LSM6DSO_DEVICE_INIT(inst)					\
+	IF_ENABLED(DT_INST_ON_BUS(inst, i3c),				\
+		(LSM6DSO_I3C_DEV_REG(inst)));
 
 DT_INST_FOREACH_STATUS_OKAY(LSM6DSO_DEFINE)
