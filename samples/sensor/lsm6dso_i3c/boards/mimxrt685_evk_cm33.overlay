@@ -1,0 +1,29 @@
+&arduino_i2c {
+	status = "disabled";
+};
+
+&i3c0 {
+	status = "okay";
+
+	/*
+	 * There might be other connected I2C devices
+	 * (for example, if using Arduino shield) which
+	 * cannot tolerate high clock speed. So slow
+	 * down the clock.
+	 */
+	i2c-scl-hz = <400000>;
+	i3c-scl-hz = <400000>;
+	i3c-od-scl-hz = <400000>;
+
+	clk-divider = <12>;
+	clk-divider-slow = <1>;
+	clk-divider-tc = <1>;
+
+	lsm6dso@6b {
+		label = "LSM6DSO";
+		compatible = "st,lsm6dso";
+		reg = <0x6b 0x0208 0x006c100b>;
+
+		status = "okay";
+	};
+};
