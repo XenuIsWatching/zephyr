@@ -267,18 +267,68 @@ static int lps22hh_init(const struct device *dev)
 	}
 
 /*
+ * Instantiation macros used when a device is on an I#C bus.
+ */
+
+#define LPS22HH_DATA_I3C(inst)						\
+	{								\
+		.i3c = I3C_DEVICE_DESC_DT_INST(inst),			\
+	}
+
+#define LPS22HH_CONFIG_I3C(inst)					\
+	{								\
+		.ctx = {						\
+			.read_reg =					\
+			   (stmdev_read_ptr) stmemsc_i3c_read,		\
+			.write_reg =					\
+			   (stmdev_write_ptr) stmemsc_i3c_write,	\
+			.handle =					\
+			   (void *)&lps22hh_config_##inst.stmemsc_cfg,	\
+		},							\
+		.stmemsc_cfg = {					\
+			.i3c = &lps22hh_data_##inst.i3c,		\
+		},							\
+		.odr = DT_INST_PROP(inst, odr),				\
+		COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, drdy_gpios),	\
+			(LPS22HH_CFG_IRQ(inst)), ())			\
+	}
+
+#if DT_ANY_INST_ON_BUS_STATUS_OKAY(i3c)
+static int lps22hh_i3c_dev_reg(const struct device *dev)
+{
+	struct lps22hh_data *data = dev->data;
+	struct i3c_device_desc *target = &data->i3c;
+
+	i3c_device_register(target);
+
+	return 0;
+}
+
+#define LPS22HH_I3C_DEV_REG(inst)					\
+	I3C_DEVICE_REGISTER_INIT(lps22hh_i3c_dev_reg,			\
+				 DEVICE_DT_INST_GET(inst));
+#endif
+
+/*
  * Main instantiation macro. Use of COND_CODE_1() selects the right
  * bus-specific macro at preprocessor time.
  */
 
 #define LPS22HH_DEFINE(inst)							\
-	static struct lps22hh_data lps22hh_data_##inst;				\
+	static struct lps22hh_data lps22hh_data_##inst				\
+		IF_ENABLED(DT_INST_ON_BUS(inst, i3c),				\
+			   (= LPS22HH_DATA_I3C(inst)))				\
+		;								\
 	static const struct lps22hh_config lps22hh_config_##inst =		\
 	COND_CODE_1(DT_INST_ON_BUS(inst, spi),					\
 		    (LPS22HH_CONFIG_SPI(inst)),					\
-		    (LPS22HH_CONFIG_I2C(inst)));				\
+		    (COND_CODE_1(DT_INST_ON_BUS(inst, i3c),			\
+				 (LPS22HH_CONFIG_I3C(inst)),			\
+				 (LPS22HH_CONFIG_I2C(inst)))));			\
 	DEVICE_DT_INST_DEFINE(inst, lps22hh_init, NULL, &lps22hh_data_##inst,	\
 			      &lps22hh_config_##inst, POST_KERNEL,		\
-			      CONFIG_SENSOR_INIT_PRIORITY, &lps22hh_driver_api);
+			      CONFIG_SENSOR_INIT_PRIORITY, &lps22hh_driver_api);\
+	IF_ENABLED(DT_INST_ON_BUS(inst, i3c),					\
+		   (LPS22HH_I3C_DEV_REG(inst)));
 
 DT_INST_FOREACH_STATUS_OKAY(LPS22HH_DEFINE)
