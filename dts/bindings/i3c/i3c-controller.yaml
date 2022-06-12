@@ -35,3 +35,9 @@ properties:
         and there are I2C devices attached to the bus, look at the Legacy
         Virtual Register (LVR) of all connected I2C devices to determine
         the maximum allowed frequency.
+
+child-binding:
+  description: I3C I2C Device node
+  compatible: "zephyr,i3c-i2c-node"
+  on-bus: i3c
+  bus: i2c

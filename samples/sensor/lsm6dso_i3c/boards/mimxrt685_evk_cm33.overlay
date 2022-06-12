@@ -26,4 +26,21 @@
 
 		status = "okay";
 	};
+
+	i3c_i2c0 {
+		compatible = "zephyr,i3c-i2c-node";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		eeprom: eeprom@51 {
+			compatible = "atmel,at24";
+			status = "okay";
+			reg = <0x51>;
+			size = <4096>;
+			address-width = <8>;
+			timeout = <25>;
+			pagesize = <32>;
+			label = "EEPROM";
+		};
+	};
 };

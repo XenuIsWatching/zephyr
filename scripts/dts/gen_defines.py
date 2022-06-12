@@ -352,6 +352,10 @@ def write_bus(node):
     if not bus:
         return
 
+    # For an I2C node on an I3C device, override the bus with it's parent
+    if bus._binding and bus._binding.compatible == "zephyr,i3c-i2c-node":
+        bus = bus.bus_node
+
     if not bus.label:
         err(f"missing 'label' property on bus node {bus!r}")
 
