@@ -323,3 +323,10 @@ test_spi_bme680: bme680@3c {
 	reg = <0x3c>;
 	spi-max-frequency = <0>;
 };
+
+test_spi_bmi08x: bmi08x@3d {
+	compatible = "bosch,bmi08x";
+	reg = <0x3d>;
+	spi-max-frequency = <0>;
+	int-gpios = <&test_gpio 0 0>;
+};

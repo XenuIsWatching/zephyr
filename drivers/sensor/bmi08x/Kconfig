@@ -1,0 +1,226 @@
+# Bosch BMI08X inertial measurement configuration options
+
+# Copyright (c) 2022 Meta Platforms, Inc. and its affiliates
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig BMI08X
+	bool "Bosch BMI08X inertial measurement unit"
+	depends on SPI || I2C
+	help
+	  Enable Bosch BMI08X inertial measurement unit that provides acceleration
+	  and angular rate measurements.
+
+if BMI08X
+
+choice BMI08X_ACCEL_TRIGGER_MODE
+	prompt "Accelerometer trigger mode"
+	default BMI08X_ACCEL_TRIGGER_GLOBAL_THREAD
+	help
+	  Specify the type of triggering to be used by the driver.
+
+config BMI08X_ACCEL_TRIGGER_NONE
+	bool "No trigger"
+
+config BMI08X_ACCEL_TRIGGER_GLOBAL_THREAD
+	bool "Use global thread"
+	select BMI08X_ACCEL_TRIGGER
+
+config BMI08X_ACCEL_TRIGGER_OWN_THREAD
+	bool "Use own thread"
+	select BMI08X_ACCEL_TRIGGER
+endchoice
+
+config BMI08X_ACCEL_TRIGGER
+	bool
+
+config BMI08X_ACCEL_THREAD_PRIORITY
+	int "Accelerometer own thread priority"
+	depends on BMI08X_ACCEL_TRIGGER_OWN_THREAD
+	default 10
+	help
+	  The priority of the thread used for handling interrupts.
+
+config BMI08X_ACCEL_THREAD_STACK_SIZE
+	int "Accelerometer own thread stack size"
+	depends on BMI08X_ACCEL_TRIGGER_OWN_THREAD
+	default 1536
+	help
+	  The thread stack size.
+
+choice BMI08X_GYRO_TRIGGER_MODE
+	prompt "Gyroscope trigger mode"
+	default BMI08X_GYRO_TRIGGER_NONE if BMI08X_DATA_SYNC
+	default BMI08X_GYRO_TRIGGER_GLOBAL_THREAD
+	help
+	  Specify the type of triggering to be used by the driver.
+
+config BMI08X_GYRO_TRIGGER_NONE
+	bool "No trigger"
+
+config BMI08X_GYRO_TRIGGER_GLOBAL_THREAD
+	bool "Use global thread" if !BMI08X_DATA_SYNC
+	select BMI08X_GYRO_TRIGGER
+
+config BMI08X_GYRO_TRIGGER_OWN_THREAD
+	bool "Use own thread" if !BMI08X_DATA_SYNC
+	select BMI08X_GYRO_TRIGGER
+endchoice
+
+config BMI08X_GYRO_TRIGGER
+	bool
+
+config BMI08X_GYRO_THREAD_PRIORITY
+	int "Own thread priority"
+	depends on BMI08X_GYRO_TRIGGER_OWN_THREAD
+	default 10
+	help
+	  The priority of the thread used for handling interrupts.
+
+config BMI08X_GYRO_THREAD_STACK_SIZE
+	int "Own thread stack size"
+	depends on BMI08X_GYRO_TRIGGER_OWN_THREAD
+	default 1536
+	help
+	  The thread stack size.
+
+config BMI08X_DATA_SYNC
+	bool "Data synchronization between the accel and gyro"
+	help
+	  Enable data synchronization between the Accelerometer and Gyroscope for BMI08X
+
+choice BMI08X_DATA_SYNC_ODR
+	prompt "Data sync sampling frequency."
+	depends on BMI08X_DATA_SYNC
+	default BMI08X_DATA_SYNC_ODR_RUNTIME
+
+config BMI08X_DATA_SYNC_ODR_RUNTIME
+	bool "Set at runtime."
+
+config BMI08X_DATA_SYNC_ODR_400
+	bool "400 Hz"
+
+config BMI08X_DATA_SYNC_ODR_1000
+	bool "1000 Hz"
+
+config BMI08X_DATA_SYNC_ODR_2000
+	bool "2000 Hz"
+endchoice
+
+choice BMI08X_ACCEL_RANGE
+	prompt "Accelerometer range setting"
+	default BMI08X_ACCEL_RANGE_RUNTIME
+
+config BMI08X_ACCEL_RANGE_RUNTIME
+	bool "Set at runtime."
+
+config BMI08X_ACCEL_RANGE_2G_3G
+	bool "BMI085 2G / BMI088 3G"
+
+config BMI08X_ACCEL_RANGE_4G_6G
+	bool "BMI085 4G / BMI088 6G"
+
+config BMI08X_ACCEL_RANGE_8G_12G
+	bool "BMI085 8G / BMI088 12G"
+
+config BMI08X_ACCEL_RANGE_16G_24G
+	bool "BMI085 16G / BMI088 24G"
+endchoice
+
+choice BMI08X_ACCEL_ODR
+	prompt "Accelerometer sampling frequency."
+	default BMI08X_ACCEL_ODR_1600 if BMI08X_DATA_SYNC_ODR_2000
+	default BMI08X_ACCEL_ODR_800 if BMI08X_DATA_SYNC_ODR_1000
+	default BMI08X_ACCEL_ODR_400 if BMI08X_DATA_SYNC_ODR_400
+	default BMI08X_ACCEL_ODR_RUNTIME
+
+config BMI08X_ACCEL_ODR_RUNTIME
+	bool "Set at runtime." if !BMI08X_DATA_SYNC
+
+config BMI08X_ACCEL_ODR_25_2
+	bool "12.5 Hz" if !BMI08X_DATA_SYNC
+
+config BMI08X_ACCEL_ODR_25
+	bool "25 Hz" if !BMI08X_DATA_SYNC
+
+config BMI08X_ACCEL_ODR_50
+	bool "50 Hz" if !BMI08X_DATA_SYNC
+
+config BMI08X_ACCEL_ODR_100
+	bool "100 Hz" if !BMI08X_DATA_SYNC
+
+config BMI08X_ACCEL_ODR_200
+	bool "200 Hz" if !BMI08X_DATA_SYNC
+
+config BMI08X_ACCEL_ODR_400
+	bool "400 Hz" if ((BMI08X_DATA_SYNC && BMI08X_DATA_SYNC_ODR_400) || !BMI08X_DATA_SYNC)
+
+config BMI08X_ACCEL_ODR_800
+	bool "800 Hz" if ((BMI08X_DATA_SYNC && BMI08X_DATA_SYNC_ODR_1000) || !BMI08X_DATA_SYNC)
+
+config BMI08X_ACCEL_ODR_1600
+	bool "1600 Hz" if ((BMI08X_DATA_SYNC && BMI08X_DATA_SYNC_ODR_2000) || !BMI08X_DATA_SYNC)
+endchoice
+
+choice BMI08X_GYRO_RANGE
+	prompt "Gyroscope range setting."
+	default BMI08X_GYRO_RANGE_RUNTIME
+
+config BMI08X_GYRO_RANGE_RUNTIME
+	bool "Set at runtime."
+
+config BMI08X_GYRO_RANGE_2000DPS
+	bool "2000 DPS"
+
+config BMI08X_GYRO_RANGE_1000DPS
+	bool "1000 DPS"
+
+config BMI08X_GYRO_RANGE_500DPS
+	bool "500 DPS"
+
+config BMI08X_GYRO_RANGE_250DPS
+	bool "250 DPS"
+
+config BMI08X_GYRO_RANGE_125DPS
+	bool "125 DPS"
+endchoice
+
+choice BMI08X_GYRO_ODR
+	prompt "Gyroscope sampling frequency."
+	default BMI08X_GYRO_ODR_2000_532 if BMI08X_DATA_SYNC_ODR_2000
+	default BMI08X_GYRO_ODR_1000_116 if BMI08X_DATA_SYNC_ODR_1000
+	default BMI08X_GYRO_ODR_400_47 if BMI08X_DATA_SYNC_ODR_400
+	default BMI08X_GYRO_ODR_RUNTIME
+
+config BMI08X_GYRO_ODR_RUNTIME
+	bool "Set at runtime." if !BMI08X_DATA_SYNC
+
+config BMI08X_GYRO_ODR_100_12
+	bool "100 Hz, 12Hz filter" if !BMI08X_DATA_SYNC
+
+config BMI08X_GYRO_ODR_100_32
+	bool "100 Hz, 32Hz filter" if !BMI08X_DATA_SYNC
+
+config BMI08X_GYRO_ODR_200_23
+	bool "200 Hz, 23Hz filter" if !BMI08X_DATA_SYNC
+
+config BMI08X_GYRO_ODR_200_64
+	bool "200 Hz, 64Hz filter" if !BMI08X_DATA_SYNC
+
+config BMI08X_GYRO_ODR_400_47
+	bool "400 Hz, 47Hz filter" if ((BMI08X_DATA_SYNC && BMI08X_DATA_SYNC_ODR_400) || !BMI08X_DATA_SYNC)
+
+config BMI08X_GYRO_ODR_1000_116
+	bool "1000 Hz, 116Hz filter" if ((BMI08X_DATA_SYNC && BMI08X_DATA_SYNC_ODR_1000) || !BMI08X_DATA_SYNC)
+
+config BMI08X_GYRO_ODR_2000_230
+	bool "2000 Hz, 230Hz filter" if ((BMI08X_DATA_SYNC && BMI08X_DATA_SYNC_ODR_2000) || !BMI08X_DATA_SYNC)
+
+config BMI08X_GYRO_ODR_2000_532
+	bool "2000 Hz, 532Hz filter" if ((BMI08X_DATA_SYNC && BMI08X_DATA_SYNC_ODR_2000) || !BMI08X_DATA_SYNC)
+endchoice
+
+config BMI08X_I2C_WRITE_BURST_SIZE
+	int "Maximum length of single i2c write"
+	default 16
+
+endif # BMI08X

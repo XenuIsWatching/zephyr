@@ -630,3 +630,9 @@ test_i2c_max31875: max31875@53 {
 	compatible = "maxim,max31875";
 	reg = <0x53>;
 };
+
+test_i2c_bmi08x: bmi08x@54 {
+	compatible = "bosch,bmi08x";
+	reg = <0x54>;
+	int-gpios = <&test_gpio 0 0>;
+};
