@@ -177,7 +177,6 @@ static const struct bmi08x_range bmi08x_gyr_range_map[] = {
 };
 #define BMI08X_GYR_RANGE_MAP_SIZE ARRAY_SIZE(bmi08x_gyr_range_map)
 
-#if defined(CONFIG_BMI08X_GYRO_RANGE_RUNTIME)
 static int32_t bmi08x_range_to_reg_val(uint16_t range, const struct bmi08x_range *range_map,
 				       uint16_t range_map_size)
 {
@@ -191,7 +190,6 @@ static int32_t bmi08x_range_to_reg_val(uint16_t range, const struct bmi08x_range
 
 	return -EINVAL;
 }
-#endif
 
 static int32_t bmi08x_reg_val_to_range(uint8_t reg_val, const struct bmi08x_range *range_map,
 				       uint16_t range_map_size)
@@ -212,7 +210,6 @@ int32_t bmi08x_gyr_reg_val_to_range(uint8_t reg_val)
 	return bmi08x_reg_val_to_range(reg_val, bmi08x_gyr_range_map, BMI08X_GYR_RANGE_MAP_SIZE);
 }
 
-#if defined(CONFIG_BMI08X_GYRO_ODR_RUNTIME)
 static int bmi08x_gyr_odr_set(const struct device *dev, uint16_t freq_int, uint16_t freq_milli)
 {
 	int odr = bmi08x_freq_to_odr_val(freq_int, freq_milli);
@@ -227,9 +224,7 @@ static int bmi08x_gyr_odr_set(const struct device *dev, uint16_t freq_int, uint1
 
 	return bmi08x_gyro_byte_write(dev, BMI08X_REG_GYRO_BANDWIDTH, (uint8_t)odr);
 }
-#endif
 
-#if defined(CONFIG_BMI08X_GYRO_RANGE_RUNTIME)
 static int bmi08x_gyr_range_set(const struct device *dev, uint16_t range)
 {
 	struct bmi08x_gyro_data *bmi08x = dev->data;
@@ -248,21 +243,15 @@ static int bmi08x_gyr_range_set(const struct device *dev, uint16_t range)
 
 	return 0;
 }
-#endif
 
 static int bmi08x_gyr_config(const struct device *dev, enum sensor_channel chan,
 			     enum sensor_attribute attr, const struct sensor_value *val)
 {
 	switch (attr) {
-#if defined(CONFIG_BMI08X_GYRO_RANGE_RUNTIME)
 	case SENSOR_ATTR_FULL_SCALE:
 		return bmi08x_gyr_range_set(dev, sensor_rad_to_degrees(val));
-#endif
-#if defined(CONFIG_BMI08X_GYRO_ODR_RUNTIME)
 	case SENSOR_ATTR_SAMPLING_FREQUENCY:
 		return bmi08x_gyr_odr_set(dev, val->val1, val->val2 / 1000);
-#endif
-
 	default:
 		LOG_ERR("Gyro attribute not supported.");
 		return -ENOTSUP;
@@ -464,16 +453,14 @@ int bmi08x_gyro_init(const struct device *dev)
 	}
 
 	/* set gyro default range */
-	if (bmi08x_gyro_byte_write(dev, BMI08X_REG_GYRO_RANGE, BMI08X_DEFAULT_RANGE_GYR) < 0) {
+	status = bmi08x_gyr_range_set(dev, config->gyro_fs);
+	if (status < 0) {
 		LOG_ERR("Cannot set default range for gyroscope.");
-		return -EIO;
+		return status;
 	}
 
-	gyr_range = bmi08x_gyr_reg_val_to_range(BMI08X_DEFAULT_RANGE_GYR);
-
-	bmi08x->scale = BMI08X_GYR_SCALE(gyr_range);
-
-	if (bmi08x_gyro_byte_write(dev, BMI08X_REG_GYRO_BANDWIDTH, BMI08X_DEFAULT_ODR_GYR) < 0) {
+	/* set gyro default bandwidth */
+	if (bmi08x_gyro_byte_write(dev, BMI08X_REG_GYRO_BANDWIDTH, config->gyro_hz) < 0) {
 		LOG_ERR("Failed to set gyro's default ODR.");
 		return -EIO;
 	}
@@ -524,6 +511,8 @@ int bmi08x_gyro_init(const struct device *dev)
 			   (.int_gpio = GPIO_DT_SPEC_INST_GET(inst, int_gpios)))                   \
 			.int3_4_map = DT_INST_PROP(inst, int3_4_map_io),                           \
 		.int3_4_io_conf = DT_INST_PROP(inst, int3_4_io_conf),                              \
+		.gyro_hz = DT_INST_ENUM_IDX(inst, gyro_hz),                                        \
+		.gyro_fs = DT_INST_PROP(inst, gyro_fs),                                            \
 	};                                                                                         \
                                                                                                    \
 	PM_DEVICE_DT_INST_DEFINE(inst, bmi08x_gyro_pm_action);                                     \

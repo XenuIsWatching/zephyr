@@ -31,3 +31,30 @@ properties:
         Bit[1]: if set to 1, INT3 is open-drain, otherwise it's push-pull
         Bit[2]: if set to 1, INT4 is active high, otherwise it's active low
         Bit[3]: if set to 1, INT4 is open-drain, otherwise it's push-pull
+
+    gyro-hz:
+      type: int
+      required: true
+      description: |
+        Default frequency of accelerometer. (Unit - Hz)
+      enum:
+        - "2000_532"
+        - "2000_230"
+        - "1000_116"
+        - "400_47"
+        - "200_23"
+        - "100_12"
+        - "200_64"
+        - "100_32"
+
+    gyro-fs:
+      type: int
+      required: true
+      description: |
+        Default full scale of accelerometer. (Unit - g)
+      enum:
+        - 2000
+        - 1000
+        - 500
+        - 250
+        - 125

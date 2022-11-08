@@ -237,7 +237,6 @@ int bmi08x_accel_reg_field_update(const struct device *dev, uint8_t reg_addr, ui
 	return bmi08x_accel_byte_write(dev, reg_addr, (old_val & ~mask) | ((val << pos) & mask));
 }
 
-#if defined(CONFIG_BMI08X_ACCEL_ODR_RUNTIME)
 /*
  * Output data rate map with allowed frequencies:
  * freq = freq_int + freq_milli / 1000
@@ -274,9 +273,7 @@ static int bmi08x_freq_to_odr_val(uint16_t freq_int, uint16_t freq_milli)
 
 	return -EINVAL;
 }
-#endif
 
-#if defined(CONFIG_BMI08X_ACCEL_ODR_RUNTIME)
 static int bmi08x_acc_odr_set(const struct device *dev, uint16_t freq_int, uint16_t freq_milli)
 {
 	int odr = bmi08x_freq_to_odr_val(freq_int, freq_milli);
@@ -288,7 +285,6 @@ static int bmi08x_acc_odr_set(const struct device *dev, uint16_t freq_int, uint1
 	return bmi08x_accel_reg_field_update(dev, BMI08X_REG_ACCEL_CONF, 0, BMI08X_ACCEL_ODR_MASK,
 					     (uint8_t)odr);
 }
-#endif
 
 static const struct bmi08x_range bmi085_acc_range_map[] = {
 	{2, BMI085_ACCEL_RANGE_2G},
@@ -306,6 +302,20 @@ static const struct bmi08x_range bmi088_acc_range_map[] = {
 };
 #define BMI088_ACC_RANGE_MAP_SIZE ARRAY_SIZE(bmi088_acc_range_map)
 
+static int32_t bmi08x_range_to_reg_val(uint16_t range, const struct bmi08x_range *range_map,
+				       uint16_t range_map_size)
+{
+	int i;
+
+	for (i = 0; i < range_map_size; i++) {
+		if (range <= range_map[i].range) {
+			return range_map[i].reg_val;
+		}
+	}
+
+	return -EINVAL;
+}
+
 static int32_t bmi08x_reg_val_to_range(uint8_t reg_val, const struct bmi08x_range *range_map,
 				       uint16_t range_map_size)
 {
@@ -320,27 +330,16 @@ static int32_t bmi08x_reg_val_to_range(uint8_t reg_val, const struct bmi08x_rang
 	return -EINVAL;
 }
 
-int32_t bmi085_acc_reg_val_to_range(uint8_t reg_val)
-{
-	return bmi08x_reg_val_to_range(reg_val, bmi085_acc_range_map, BMI085_ACC_RANGE_MAP_SIZE);
-}
-
-int32_t bmi088_acc_reg_val_to_range(uint8_t reg_val)
-{
-	return bmi08x_reg_val_to_range(reg_val, bmi088_acc_range_map, BMI088_ACC_RANGE_MAP_SIZE);
-}
-
-#if defined(CONFIG_BMI08X_ACCEL_RANGE_RUNTIME)
 static int bmi08x_acc_range_set(const struct device *dev, int32_t range)
 {
-	struct bmi08x_accel_data *bmi08x = dev->data;
+	struct bmi08x_accel_data *data = dev->data;
 	int32_t reg_val = -1;
 
-	if (bmi08x->accel_chip_id == BMI085_ACCEL_CHIP_ID) {
-		reg_val = bmi085_range_to_reg_val(range, bmi085_acc_range_map,
+	if (data->accel_chip_id == BMI085_ACCEL_CHIP_ID) {
+		reg_val = bmi08x_range_to_reg_val(range, bmi085_acc_range_map,
 						  BMI085_ACC_RANGE_MAP_SIZE);
-	} else if (bmi08x->accel_chip_id == BMI088_ACCEL_CHIP_ID) {
-		reg_val = bmi088_range_to_reg_val(range, bmi088_acc_range_map,
+	} else if (data->accel_chip_id == BMI088_ACCEL_CHIP_ID) {
+		reg_val = bmi08x_range_to_reg_val(range, bmi088_acc_range_map,
 						  BMI088_ACC_RANGE_MAP_SIZE);
 	} else {
 		return -ENXIO;
@@ -350,28 +349,23 @@ static int bmi08x_acc_range_set(const struct device *dev, int32_t range)
 		return reg_val;
 	}
 
-	if (bmi08x_accel_byte_write(dev, BMI08X_REG_ACCEL_CONF, reg_val & 0xff) < 0) {
+	if (bmi08x_accel_byte_write(dev, BMI08X_REG_ACCEL_RANGE, reg_val & 0xff) < 0) {
 		return -EIO;
 	}
 
-	bmi08x->scale = BMI08X_ACC_SCALE(range);
+	data->scale = BMI08X_ACC_SCALE(range);
 
 	return 0;
 }
-#endif
 
 static int bmi08x_acc_config(const struct device *dev, enum sensor_channel chan,
 			     enum sensor_attribute attr, const struct sensor_value *val)
 {
 	switch (attr) {
-#if defined(CONFIG_BMI08X_ACCEL_RANGE_RUNTIME)
 	case SENSOR_ATTR_FULL_SCALE:
 		return bmi08x_acc_range_set(dev, sensor_ms2_to_g(val));
-#endif
-#if defined(CONFIG_BMI08X_ACCEL_ODR_RUNTIME)
 	case SENSOR_ATTR_SAMPLING_FREQUENCY:
 		return bmi08x_acc_odr_set(dev, val->val1, val->val2 / 1000);
-#endif
 	default:
 		LOG_ERR("Accel attribute not supported.");
 		return -ENOTSUP;
@@ -408,7 +402,7 @@ static int bmi08x_attr_set(const struct device *dev, enum sensor_channel chan,
 
 static int bmi08x_sample_fetch(const struct device *dev, enum sensor_channel chan)
 {
-	struct bmi08x_accel_data *bmi08x = dev->data;
+	struct bmi08x_accel_data *data = dev->data;
 	size_t i;
 
 	__ASSERT_NO_MSG(chan == SENSOR_CHAN_ALL);
@@ -424,15 +418,15 @@ static int bmi08x_sample_fetch(const struct device *dev, enum sensor_channel cha
 
 	pm_device_busy_set(dev);
 
-	if (bmi08x_accel_transceive(dev, BMI08X_REG_ACCEL_X_LSB | (1 << 7), false,
-				    bmi08x->acc_sample, 6) < 0) {
+	if (bmi08x_accel_transceive(dev, BMI08X_REG_ACCEL_X_LSB | (1 << 7), false, data->acc_sample,
+				    6) < 0) {
 		pm_device_busy_clear(dev);
 		return -EIO;
 	}
 
 	/* convert samples to cpu endianness */
-	for (i = 0; i < ARRAY_SIZE(bmi08x->acc_sample); i++) {
-		bmi08x->acc_sample[i] = sys_le16_to_cpu(bmi08x->acc_sample[i]);
+	for (i = 0; i < ARRAY_SIZE(data->acc_sample); i++) {
+		data->acc_sample[i] = sys_le16_to_cpu(data->acc_sample[i]);
 	}
 
 	pm_device_busy_clear(dev);
@@ -484,9 +478,9 @@ static void bmi08x_channel_convert(enum sensor_channel chan, uint16_t scale, uin
 static inline void bmi08x_acc_channel_get(const struct device *dev, enum sensor_channel chan,
 					  struct sensor_value *val)
 {
-	struct bmi08x_accel_data *bmi08x = dev->data;
+	struct bmi08x_accel_data *data = dev->data;
 
-	bmi08x_channel_convert(chan, bmi08x->scale, bmi08x->acc_sample, val);
+	bmi08x_channel_convert(chan, data->scale, data->acc_sample, val);
 }
 
 static int bmi08x_temp_channel_get(const struct device *dev, struct sensor_value *val)
@@ -510,7 +504,7 @@ static int bmi08x_temp_channel_get(const struct device *dev, struct sensor_value
 static int bmi08x_channel_get(const struct device *dev, enum sensor_channel chan,
 			      struct sensor_value *val)
 {
-	struct bmi08x_accel_data *bmi08x = dev->data;
+	struct bmi08x_accel_data *data = dev->data;
 	uint8_t temp_raw[2] = {0};
 
 #ifdef CONFIG_PM_DEVICE
@@ -582,6 +576,7 @@ static const struct sensor_driver_api bmi08x_api = {
 	.channel_get = bmi08x_channel_get,
 };
 
+#ifdef CONFIG_BMI08X_DATA_SYNC
 static int bmi08x_apply_sync_binary_config(const struct device *dev)
 {
 	if (bmi08x_accel_byte_write(dev, BMI08X_REG_ACCEL_PWR_CONF, BMI08X_ACCEL_PM_ACTIVE) < 0) {
@@ -658,10 +653,12 @@ static int bmi08x_apply_sync_binary_config(const struct device *dev)
 
 	return 0;
 }
+#endif
 
 int bmi08x_accel_init(const struct device *dev)
 {
-	struct bmi08x_accel_data *bmi08x = dev->data;
+	const struct bmi08x_accel_config *config = dev->config;
+	struct bmi08x_accel_data *data = dev->data;
 	uint8_t val = 0U;
 	int32_t acc_range;
 
@@ -695,7 +692,7 @@ int bmi08x_accel_init(const struct device *dev)
 		LOG_ERR("Unsupported chip detected (0x%02x)!", val);
 		return -ENODEV;
 	}
-	bmi08x->accel_chip_id = val;
+	data->accel_chip_id = val;
 
 	/* enable power */
 	if (bmi08x_accel_byte_write(dev, BMI08X_REG_ACCEL_PWR_CONF, BMI08X_ACCEL_PM_ACTIVE) < 0) {
@@ -718,24 +715,16 @@ int bmi08x_accel_init(const struct device *dev)
 #endif
 
 	/* set accelerometer default range */
-	if (bmi08x_accel_byte_write(dev, BMI08X_REG_ACCEL_RANGE, BMI08X_DEFAULT_RANGE_ACC) < 0) {
+	status = bmi08x_acc_range_set(dev, config->accel_fs);
+	if (status < 0) {
 		LOG_ERR("Cannot set default range for accelerometer.");
-		return -EIO;
+		return status;
 	}
 
-	if (bmi08x->accel_chip_id == BMI085_ACCEL_CHIP_ID) {
-		acc_range = bmi085_acc_reg_val_to_range(BMI08X_DEFAULT_RANGE_ACC);
-	} else if (bmi08x->accel_chip_id == BMI088_ACCEL_CHIP_ID) {
-		acc_range = bmi088_acc_reg_val_to_range(BMI08X_DEFAULT_RANGE_ACC);
-	} else {
-		LOG_ERR("Invalid ACCEL chip: setting to minimum range.");
-		acc_range = 0;
-	}
-
-	bmi08x->scale = BMI08X_ACC_SCALE(acc_range);
-
-	if (bmi08x_accel_reg_field_update(dev, BMI08X_REG_ACCEL_CONF, 0, BMI08X_ACCEL_ODR_MASK,
-					  BMI08X_DEFAULT_ODR_ACC) < 0) {
+	/* set accelerometer default odr */
+	status = bmi08x_accel_reg_field_update(dev, BMI08X_REG_ACCEL_CONF, 0, BMI08X_ACCEL_ODR_MASK,
+					       config->accel_hz + 5);
+	if (status < 0) {
 		LOG_ERR("Failed to set accel's default ODR.");
 		return -EIO;
 	}
@@ -770,6 +759,8 @@ int bmi08x_accel_init(const struct device *dev)
 		.int2_map = DT_INST_PROP(inst, int2_map_io),                                       \
 		.int1_io_conf = DT_INST_PROP(inst, int1_io_conf),                                  \
 		.int2_io_conf = DT_INST_PROP(inst, int2_io_conf),                                  \
+		.accel_hz = DT_INST_ENUM_IDX(inst, accel_hz),                                  \
+		.accel_fs = DT_INST_PROP(inst, accel_fs),                                          \
 	};                                                                                         \
                                                                                                    \
 	PM_DEVICE_DT_INST_DEFINE(inst, bmi08x_accel_pm_action);                                    \
