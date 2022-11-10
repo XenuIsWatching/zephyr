@@ -471,11 +471,11 @@ struct bmi08x_accel_config {
 	const struct bmi08x_accel_bus_io *api;
 #if defined(CONFIG_BMI08X_ACCEL_TRIGGER)
 	struct gpio_dt_spec int_gpio;
-#endif
 	uint8_t int1_map;
 	uint8_t int2_map;
 	uint8_t int1_io_conf;
 	uint8_t int2_io_conf;
+#endif
 };
 
 struct bmi08x_gyro_config {
