@@ -579,6 +579,8 @@ static const struct sensor_driver_api bmi08x_api = {
 #ifdef CONFIG_BMI08X_DATA_SYNC
 static int bmi08x_apply_sync_binary_config(const struct device *dev)
 {
+	const struct bmi08x_accel_config *config = dev->config;
+
 	if (bmi08x_accel_byte_write(dev, BMI08X_REG_ACCEL_PWR_CONF, BMI08X_ACCEL_PM_ACTIVE) < 0) {
 		LOG_ERR("Cannot deactivate advanced power save mode.");
 		return -EIO;
@@ -601,9 +603,7 @@ static int bmi08x_apply_sync_binary_config(const struct device *dev)
 		return -EIO;
 	}
 
-	const struct bmi08x_accel_config *cfg = dev->config;
-
-	if (cfg->api->write_config_file(dev) != 0) {
+	if (config->api->write_config_file(dev) != 0) {
 		LOG_ERR("Cannot write configuration for accelerometer.");
 		return -EIO;
 	}
@@ -635,7 +635,7 @@ static int bmi08x_apply_sync_binary_config(const struct device *dev)
 		LOG_ERR("Cannot read configuration for accelerometer.");
 		return -EIO;
 	}
-	fdata[4] = BMI08X_DEFAULT_ODR_DATA_SYNC;
+	fdata[4] = config->sync_hz;
 	fdata[5] = 0x00;
 	if (bmi08x_accel_write(dev, BMI08X_ACCEL_FEATURE_CFG_REG, fdata, 6)) {
 		LOG_ERR("Cannot write configuration for accelerometer.");
@@ -660,7 +660,6 @@ int bmi08x_accel_init(const struct device *dev)
 	const struct bmi08x_accel_config *config = dev->config;
 	struct bmi08x_accel_data *data = dev->data;
 	uint8_t val = 0U;
-	int32_t acc_range;
 
 	int status = bmi08x_bus_check(dev);
 
@@ -723,7 +722,7 @@ int bmi08x_accel_init(const struct device *dev)
 
 	/* set accelerometer default odr */
 	status = bmi08x_accel_reg_field_update(dev, BMI08X_REG_ACCEL_CONF, 0, BMI08X_ACCEL_ODR_MASK,
-					       config->accel_hz + 5);
+					       config->accel_hz);
 	if (status < 0) {
 		LOG_ERR("Failed to set accel's default ODR.");
 		return -EIO;
@@ -759,9 +758,10 @@ int bmi08x_accel_init(const struct device *dev)
 		.int2_map = DT_INST_PROP(inst, int2_map_io),                                       \
 		.int1_io_conf = DT_INST_PROP(inst, int1_io_conf),                                  \
 		.int2_io_conf = DT_INST_PROP(inst, int2_io_conf),                                  \
-		.accel_hz = DT_INST_ENUM_IDX(inst, accel_hz),                                  \
-		.accel_fs = DT_INST_PROP(inst, accel_fs),                                          \
-	};                                                                                         \
+		.accel_hz = DT_INST_ENUM_IDX(inst, accel_hz) + 5,                                  \
+		.accel_fs = DT_INST_ENUM_IDX(inst, accel_fs) / 2,                                  \
+		IF_ENABLED(CONFIG_BMI08X_DATA_SYNC,                                                \
+			   (.sync_hz = DT_INST_ENUM_IDX(inst, sync_hz) + 1,))};                   \
                                                                                                    \
 	PM_DEVICE_DT_INST_DEFINE(inst, bmi08x_accel_pm_action);                                    \
 	DEVICE_DT_INST_DEFINE(inst, bmi08x_accel_init, PM_DEVICE_DT_INST_GET(inst),                \

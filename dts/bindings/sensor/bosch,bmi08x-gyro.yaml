@@ -33,7 +33,7 @@ properties:
         Bit[3]: if set to 1, INT4 is open-drain, otherwise it's push-pull
 
     gyro-hz:
-      type: int
+      type: string
       required: true
       description: |
         Default frequency of accelerometer. (Unit - Hz)

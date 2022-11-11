@@ -426,18 +426,6 @@ enum bmi08x_odr {
 #define BMI08X_ACC_SCALE(range_g)   ((2 * range_g * SENSOR_G) / 65536LL)
 #define BMI08X_GYR_SCALE(range_dps) ((2 * range_dps * SENSOR_PI) / 180LL / 65536LL)
 
-/* default settings, based on menuconfig options */
-#if defined(CONFIG_BMI08X_DATA_SYNC_ODR_RUNTIME) || defined(CONFIG_BMI08X_DATA_SYNC_ODR_2000)
-#define BMI08X_DEFAULT_ODR_DATA_SYNC 3
-#elif defined(CONFIG_BMI08X_DATA_SYNC_ODR_1000)
-#define BMI08X_DEFAULT_ODR_DATA_SYNC 2
-#elif defined(CONFIG_BMI08X_DATA_SYNC_ODR_400)
-#define BMI08X_DEFAULT_ODR_DATA_SYNC 1
-#else
-#define BMI08X_DEFAULT_ODR_DATA_SYNC 0
-#endif
-/* end of default settings */
-
 struct bmi08x_range {
 	uint16_t range;
 	uint8_t reg_val;
@@ -475,6 +463,11 @@ struct bmi08x_accel_config {
 	uint8_t int2_map;
 	uint8_t int1_io_conf;
 	uint8_t int2_io_conf;
+#endif
+	uint8_t accel_hz;
+	uint8_t accel_fs;
+#ifdef CONFIG_BMI08X_DATA_SYNC
+	uint8_t sync_hz;
 #endif
 };
 

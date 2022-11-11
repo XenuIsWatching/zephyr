@@ -5,4 +5,4 @@ description: BMI08X Accel inertial measurement unit
 
 compatible: "bosch,bmi08x-accel"
 
-include: [spi-device.yaml, bosch,bmi08x-accel.yaml]
+include: [spi-device.yaml, "bosch,bmi08x-accel.yaml"]

@@ -422,10 +422,8 @@ static const struct sensor_driver_api bmi08x_api = {
 
 int bmi08x_gyro_init(const struct device *dev)
 {
-	struct bmi08x_gyro_data *bmi08x = dev->data;
-	const struct bmi08x_gyro_config *cfg = dev->config;
+	const struct bmi08x_gyro_config *config = dev->config(dev);
 	uint8_t val = 0U;
-	int32_t gyr_range;
 
 	int status = bmi08x_bus_check(dev);
 
@@ -471,6 +469,9 @@ int bmi08x_gyro_init(const struct device *dev)
 		return -EINVAL;
 	}
 #endif
+/* with BMI08X_DATA_SYNC set, it is expected that the INT3 or INT4 is wired to either INT1
+ * or INT2
+ */
 #if defined(CONFIG_BMI08X_GYRO_TRIGGER) || defined(CONFIG_BMI08X_DATA_SYNC)
 	/* set gyro ints */
 	/* set ints */
@@ -478,12 +479,12 @@ int bmi08x_gyro_init(const struct device *dev)
 		LOG_ERR("Failed to map interrupts.");
 		return -EIO;
 	}
-	if (bmi08x_gyro_byte_write(dev, BMI08X_REG_GYRO_INT3_INT4_IO_CONF, cfg->int3_4_io_conf) <
+	if (bmi08x_gyro_byte_write(dev, BMI08X_REG_GYRO_INT3_INT4_IO_CONF, config->int3_4_io_conf) <
 	    0) {
 		LOG_ERR("Failed to map interrupts.");
 		return -EIO;
 	}
-	if (bmi08x_gyro_byte_write(dev, BMI08X_REG_GYRO_INT3_INT4_IO_MAP, cfg->int3_4_map) < 0) {
+	if (bmi08x_gyro_byte_write(dev, BMI08X_REG_GYRO_INT3_INT4_IO_MAP, config->int3_4_map) < 0) {
 		LOG_ERR("Failed to map interrupts.");
 		return -EIO;
 	}
@@ -512,7 +513,7 @@ int bmi08x_gyro_init(const struct device *dev)
 			.int3_4_map = DT_INST_PROP(inst, int3_4_map_io),                           \
 		.int3_4_io_conf = DT_INST_PROP(inst, int3_4_io_conf),                              \
 		.gyro_hz = DT_INST_ENUM_IDX(inst, gyro_hz),                                        \
-		.gyro_fs = DT_INST_PROP(inst, gyro_fs),                                            \
+		.gyro_fs = DT_INST_ENUM_IDX(inst, gyro_fs),                                        \
 	};                                                                                         \
                                                                                                    \
 	PM_DEVICE_DT_INST_DEFINE(inst, bmi08x_gyro_pm_action);                                     \
