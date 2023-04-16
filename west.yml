@@ -41,6 +41,11 @@ manifest:
       path: modules/hal/cmsis-dsp
       groups:
         - hal
+    - name: cmsis-nn
+      revision: ffffffffffffffffffffffffffffffffffffffff
+      path: modules/hal/cmsis-nn
+      groups:
+        - hal
     - name: edtt
       revision: 64e5105ad82390164fb73fc654be3f73a608209a
       path: tools/edtt

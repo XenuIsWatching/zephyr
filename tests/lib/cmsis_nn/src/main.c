@@ -52,7 +52,7 @@ const int8_t avgpooling_2_output_ref[60] = {
 
 ZTEST(cmsis_nn, test_avgpool)
 {
-	q7_t output[AVGPOOLING_2_DST_SIZE] = { 0 };
+	int8_t output[AVGPOOLING_2_DST_SIZE] = { 0 };
 
 	cmsis_nn_context ctx;
 	cmsis_nn_pool_params pool_params;
@@ -81,12 +81,12 @@ ZTEST(cmsis_nn, test_avgpool)
 	ctx.size = arm_avgpool_s8_get_buffer_size(AVGPOOLING_2_OUTPUT_W, AVGPOOLING_2_IN_CH);
 	ctx.buf = malloc(ctx.size);
 
-	arm_status result = arm_avgpool_s8(&ctx, &pool_params, &input_dims, avgpooling_2_input,
+	arm_cmsis_nn_status result = arm_avgpool_s8(&ctx, &pool_params, &input_dims, avgpooling_2_input,
 					   &filter_dims, &output_dims, output);
 
 	free(ctx.buf);
 
-	zassert_equal(ARM_MATH_SUCCESS, result, "");
+	zassert_equal(ARM_CMSIS_NN_SUCCESS, result, "");
 	zassert_mem_equal(avgpooling_2_output_ref, output, sizeof(output), "");
 }
 
@@ -112,14 +112,14 @@ ZTEST(cmsis_nn, test_avgpool)
 
 const int32_t conv_4_biases[3] = { 2699, -5398, -2699 };
 
-const q7_t conv_4_weights[54] = {
+const int8_t conv_4_weights[54] = {
 	-127, 64, 64, -64, 0, 0, 64, -64, 0, -64, 64, 64, 64, -127,
 	64, 0, -127, -64, 64, 64, -64, -64, -64, -64, -64, 0, 0, 64,
 	64, 64, 0, 0, 0, -127, -64, -127, -127, 0, 0, 0, 0, -127,
 	-127, -127, -127, 64, -127, 64, 64, 0, 0, -64, -127, 64
 };
 
-const q7_t conv_4_input[225] = {
+const int8_t conv_4_input[225] = {
 	42, -85, -85, 0, 42, 42, -42, -42, -42, -85, 42, 42, -42, -42, -85,
 	0, -85, 0, 42, -42, 0, -42, 42, -42, -42, 42, -42, 42, -85, -42,
 	-85, -42, 0, -42, -42, -42, 42, -85, -42, -42, -42, 0, -42, 0, 0,
@@ -141,14 +141,14 @@ const int32_t conv_4_output_mult[3] = { 1629660588, 1629660588, 1629660588 };
 
 const int32_t conv_4_output_shift[3] = { -11, -11, -11 };
 
-const q7_t conv_4_output_ref[36] = {
-	-2, 2, 2, 8, 0, 1, 1, 3, 7, -2, 11, 0, 8, 4, 4, 1, -1, -5,
-	4, 5, 14, 2, 5, 7, -1, -2, 2, 5, -4, 11, -1, -2, 8, 4, 2, 0
+const int8_t conv_4_output_ref[36] = {
+	-5, -1, -3, 1, -3, 1, 4, -5, 3, -4, -2, -3, 7, -4, 3, 3, -4, 3,
+	-1, 0, -1, 0, 1, -1, 2, 0, 1, 5, -4, 3, -2, -3, -1, 0, 0, -3
 };
 
 ZTEST(cmsis_nn, test_convolve)
 {
-	q7_t output[CONV_4_DST_SIZE] = { 0 };
+	int8_t output[CONV_4_DST_SIZE] = { 0 };
 
 	cmsis_nn_context ctx;
 	cmsis_nn_conv_params conv_params;
@@ -158,9 +158,9 @@ ZTEST(cmsis_nn, test_convolve)
 	cmsis_nn_dims bias_dims;
 	cmsis_nn_dims output_dims;
 
-	const q31_t *bias_data = conv_4_biases;
-	const q7_t *kernel_data = conv_4_weights;
-	const q7_t *input_data = conv_4_input;
+	const int32_t *bias_data = conv_4_biases;
+	const int8_t *kernel_data = conv_4_weights;
+	const int8_t *input_data = conv_4_input;
 
 	input_dims.n = CONV_4_INPUT_BATCHES;
 	input_dims.w = CONV_4_INPUT_W;
@@ -189,7 +189,7 @@ ZTEST(cmsis_nn, test_convolve)
 	ctx.buf = malloc(buf_size);
 	ctx.size = 0;
 
-	arm_status result = arm_convolve_s8(&ctx,
+	arm_cmsis_nn_status result = arm_convolve_s8(&ctx,
 					    &conv_params,
 					    &quant_params,
 					    &input_dims,
@@ -202,7 +202,7 @@ ZTEST(cmsis_nn, test_convolve)
 					    output);
 
 	free(ctx.buf);
-	zassert_equal(ARM_MATH_SUCCESS, result, "");
+	zassert_equal(ARM_CMSIS_NN_SUCCESS, result, "");
 	zassert_mem_equal(conv_4_output_ref, output, sizeof(output), "");
 
 	buf_size = arm_convolve_wrapper_s8_get_buffer_size(&conv_params, &input_dims,
@@ -223,7 +223,7 @@ ZTEST(cmsis_nn, test_convolve)
 					 output);
 
 	free(ctx.buf);
-	zassert_equal(ARM_MATH_SUCCESS, result, "");
+	zassert_equal(ARM_CMSIS_NN_SUCCESS, result, "");
 	zassert_mem_equal(conv_4_output_ref, output, sizeof(output), "");
 }
 
@@ -249,9 +249,9 @@ ZTEST(cmsis_nn, test_convolve)
 
 const int32_t stride2pad1_biases[1] = { 4318 };
 
-const q7_t stride2pad1_weights[9] = { 42, 127, 127, 127, 42, 127, 85, 42, 85 };
+const int8_t stride2pad1_weights[9] = { 42, 127, 127, 127, 42, 127, 85, 42, 85 };
 
-const q7_t stride2pad1_input[49] = {
+const int8_t stride2pad1_input[49] = {
 	-26, -77, -26, -26, 25, -77, -77, -26, 25, -26, -77, -26, -26, -77, 25, -77, -26,
 	-26, -77, -26, -77, -26, -77, -26, 25, -77, -26, -26, -26, 25, -26, -77, -77, -77,
 	-26, 25, 25, -26, -77, -26, -26, -26, -26, -26, -77, -26, 25, -77, -26
@@ -261,13 +261,13 @@ const int32_t stride2pad1_output_mult[1] = { 2037075735 };
 
 const int32_t stride2pad1_output_shift[1] = { -11 };
 
-const q7_t stride2pad1_output_ref[16] = {
-	15, 23, 22, 11, 27, 35, 39, 20, 31, 42, 29, 21, 28, 27, 27, 15
+const int8_t stride2pad1_output_ref[16] = {
+	22, 46, 37, 22, 15, 59, 21, 24, 15, 21, 59, 24, 22, 44, 16, 18
 };
 
 ZTEST(cmsis_nn, test_depthwise_convolve)
 {
-	q7_t output[STRIDE2PAD1_DST_SIZE] = { 0 };
+	int8_t output[STRIDE2PAD1_DST_SIZE] = { 0 };
 
 	cmsis_nn_context ctx;
 	cmsis_nn_dw_conv_params dw_conv_params;
@@ -277,9 +277,9 @@ ZTEST(cmsis_nn, test_depthwise_convolve)
 	cmsis_nn_dims bias_dims = { 0 };
 	cmsis_nn_dims output_dims;
 
-	const q31_t *bias_data = stride2pad1_biases;
-	const q7_t *kernel_data = stride2pad1_weights;
-	const q7_t *input_data = stride2pad1_input;
+	const int32_t *bias_data = stride2pad1_biases;
+	const int8_t *kernel_data = stride2pad1_weights;
+	const int8_t *input_data = stride2pad1_input;
 
 	input_dims.n = STRIDE2PAD1_INPUT_BATCHES;
 	input_dims.w = STRIDE2PAD1_INPUT_W;
@@ -307,7 +307,7 @@ ZTEST(cmsis_nn, test_depthwise_convolve)
 	ctx.buf = NULL;
 	ctx.size = 0;
 
-	arm_status result = arm_depthwise_conv_s8(&ctx,
+	arm_cmsis_nn_status result = arm_depthwise_conv_s8(&ctx,
 						  &dw_conv_params,
 						  &quant_params,
 						  &input_dims,
@@ -320,7 +320,7 @@ ZTEST(cmsis_nn, test_depthwise_convolve)
 						  output);
 
 	free(ctx.buf);
-	zassert_equal(ARM_MATH_SUCCESS, result, "");
+	zassert_equal(ARM_CMSIS_NN_SUCCESS, result, "");
 	zassert_mem_equal(stride2pad1_output_ref, output, sizeof(output), "");
 }
 
@@ -341,13 +341,13 @@ ZTEST(cmsis_nn, test_depthwise_convolve)
 
 const int32_t fully_connected_mve_0_biases[9] = { -1, 0, 0, 2, -1, -1, 1, -3, -4 };
 
-const q7_t fully_connected_mve_0_input[16] = {
+const int8_t fully_connected_mve_0_input[16] = {
 	-5, -3, -5, -3, -3, -6, -1, -5, -4, -3, -2, 0, -2, -1, -2, -6
 };
 
-const q7_t fully_connected_mve_0_output_ref[9] = { 0, -29, 33, -5, 28, -5, 19, -7, 16 };
+const int8_t fully_connected_mve_0_output_ref[9] = { 0, -29, 33, -5, 28, -5, 19, -7, 16 };
 
-const q7_t fully_connected_mve_0_weights[144] = {
+const int8_t fully_connected_mve_0_weights[144] = {
 	1, 0, -1, -3, -4, -3, 3, -2, 3, 3, 1, 2, -2, -4, -4, 2, 3, 2, 3, -1, -2, 2,
 	-4, 0, 1, -3, -3, -3, 1, 1, -3, -4, -3, 3, 2, 3, 1, -4, 3, -3, -1, 3, 1, -2,
 	2, 3, -4, -3, 2, -4, 0, 3, 0, -2, 0, -1, -2, 0, 3, -3, -1, -2, -3, -1, -4,
@@ -359,7 +359,7 @@ const q7_t fully_connected_mve_0_weights[144] = {
 
 ZTEST(cmsis_nn, test_fully_connected)
 {
-	q7_t output[FULLY_CONNECTED_MVE_0_DST_SIZE] = { 0 };
+	int8_t output[FULLY_CONNECTED_MVE_0_DST_SIZE] = { 0 };
 
 	cmsis_nn_context ctx;
 	cmsis_nn_fc_params fc_params;
@@ -369,9 +369,9 @@ ZTEST(cmsis_nn, test_fully_connected)
 	cmsis_nn_dims bias_dims;
 	cmsis_nn_dims output_dims;
 
-	const q31_t *bias_data = fully_connected_mve_0_biases;
-	const q7_t *kernel_data = fully_connected_mve_0_weights;
-	const q7_t *input_data = fully_connected_mve_0_input;
+	const int32_t *bias_data = fully_connected_mve_0_biases;
+	const int8_t *kernel_data = fully_connected_mve_0_weights;
+	const int8_t *input_data = fully_connected_mve_0_input;
 
 	input_dims.n = FULLY_CONNECTED_MVE_0_INPUT_BATCHES;
 	input_dims.w = FULLY_CONNECTED_MVE_0_INPUT_W;
@@ -395,7 +395,7 @@ ZTEST(cmsis_nn, test_fully_connected)
 
 	ctx.buf = malloc(buf_size);
 	ctx.size = buf_size;
-	arm_status result = arm_fully_connected_s8(&ctx,
+	arm_cmsis_nn_status result = arm_fully_connected_s8(&ctx,
 						   &fc_params,
 						   &quant_params,
 						   &input_dims,
@@ -408,7 +408,7 @@ ZTEST(cmsis_nn, test_fully_connected)
 						   output);
 
 	free(ctx.buf);
-	zassert_equal(ARM_MATH_SUCCESS, result, "");
+	zassert_equal(ARM_CMSIS_NN_SUCCESS, result, "");
 	zassert_mem_equal(fully_connected_mve_0_output_ref, output, sizeof(output), "");
 }
 
@@ -446,7 +446,7 @@ const int8_t maxpooling_2_output_ref[60] = {
 
 ZTEST(cmsis_nn, test_max_pool)
 {
-	q7_t output[MAXPOOLING_2_DST_SIZE] = { 0 };
+	int8_t output[MAXPOOLING_2_DST_SIZE] = { 0 };
 
 	cmsis_nn_context ctx;
 	cmsis_nn_pool_params pool_params;
@@ -454,7 +454,7 @@ ZTEST(cmsis_nn, test_max_pool)
 	cmsis_nn_dims filter_dims;
 	cmsis_nn_dims output_dims;
 
-	const q7_t *input_data = maxpooling_2_input;
+	const int8_t *input_data = maxpooling_2_input;
 
 	input_dims.n = MAXPOOLING_2_INPUT_BATCHES;
 	input_dims.w = MAXPOOLING_2_INPUT_W;
@@ -475,10 +475,10 @@ ZTEST(cmsis_nn, test_max_pool)
 	pool_params.activation.max = MAXPOOLING_2_OUT_ACTIVATION_MAX;
 
 	for (int i = 0; i < REPEAT_NUM; i++) {
-		arm_status result = arm_max_pool_s8(&ctx, &pool_params, &input_dims, input_data,
+		arm_cmsis_nn_status result = arm_max_pool_s8(&ctx, &pool_params, &input_dims, input_data,
 						    &filter_dims, &output_dims, output);
 
-		zassert_equal(ARM_MATH_SUCCESS, result, "");
+		zassert_equal(ARM_CMSIS_NN_SUCCESS, result, "");
 		zassert_mem_equal(maxpooling_2_output_ref, output, sizeof(output), "");
 	}
 }
@@ -490,9 +490,9 @@ ZTEST(cmsis_nn, test_max_pool)
 #define SOFTMAX_DIFF_MIN                -248
 #define SOFTMAX_DST_SIZE                5
 
-const q7_t softmax_input[5] = { -80, -48, 16, 0, -96 };
+const int8_t softmax_input[5] = { -80, -48, 16, 0, -96 };
 
-const q7_t softmax_output_ref[5] = { -128, -125, 56, -60, -128 };
+const int8_t softmax_output_ref[5] = { -128, -125, 56, -60, -128 };
 
 ZTEST(cmsis_nn, test_softmax)
 {
@@ -501,7 +501,7 @@ ZTEST(cmsis_nn, test_softmax)
 	const int32_t mult = SOFTMAX_INPUT_MULT;
 	const int32_t shift = SOFTMAX_INPUT_LEFT_SHIFT;
 	const int32_t diff_min = SOFTMAX_DIFF_MIN;
-	const q7_t *input_data = softmax_input;
+	const int8_t *input_data = softmax_input;
 	int8_t output[SOFTMAX_DST_SIZE];
 
 	for (int i = 0; i < REPEAT_NUM; i++) {
@@ -530,30 +530,30 @@ ZTEST(cmsis_nn, test_softmax)
 const int32_t svdf_2_biases[5] = { 0, 0, 0, 0, 0 };
 
 
-const q15_t svdf_2_state[60] = {
+const int16_t svdf_2_state[60] = {
 	3, 1, -1, 2, 1, 4, 3, 2, 2, 1, 4, -1, -3, 3, 4, 3, 1, -1, 3, 2,
 	0, -2, -1, -2, -1, -3, 0, -3, 4, 3, -1, 4, -4, -1, 2, 3, -4, -3, -2, 1,
 	1, 4, 3, -2, -3, -2, 4, 0, -2, 1, -2, -3, -4, 2, 0, -2, -3, 0, -1, 0
 };
 
-const q7_t svdf_2_weights_feature[70] = {
+const int8_t svdf_2_weights_feature[70] = {
 	-4, 0, 2, -2, 1, 1, -1, 0, -1, 2, -1, 1, 1, 3, -3, -2, -2, 3,
 	3, -3, 1, 2, 1, -4, 0, 2, -2, -1, 3, 1, 0, 0, 1, -2, 0, 2,
 	1, 0, -1, 2, 3, -1, 3, -1, -1, -2, -4, -3, 1, 1, 2, -3, 3, -3,
 	0, 0, 2, 0, 2, -1, -1, -3, -3, 1, 2, 2, 3, -2, 3, 1
 };
 
-const q15_t svdf_2_weights_time[20] = {
+const int16_t svdf_2_weights_time[20] = {
 	-4, 3, 0, -3, -2, 0, 3, 0, -3, -2, 2, 1, -4, 3, 1, 0, 3, -2, 1, 1
 };
 
-const q7_t svdf_2_input_sequence[42] = {
+const int8_t svdf_2_input_sequence[42] = {
 	-51, 0, -26, 76, -102, -102, -76, 0, -51, -26, -51, -26, 51, 0,
 	51, -102, 51, -102, -76, 51, 76, -26, 26, -51, -76, -26, -102, -76,
 	-26, 26, 0, 51, 76, 0, 0, 26, -26, 76, -26, 76, 76, 26
 };
 
-const q7_t svdf_2_output_ref[15] = {
+const int8_t svdf_2_output_ref[15] = {
 	80, -19, -61, 17, -17, -3, 6, 30, -84, -4, -24, -11, 35, -128, 19
 };
 
@@ -585,8 +585,8 @@ ZTEST(cmsis_nn, test_svdf)
 	cmsis_nn_per_tensor_quant_params output_quant_params;
 	int8_t output_data[SVDF_2_DST_SIZE];
 
-	const q7_t *weights_feature_data = svdf_2_weights_feature;
-	const q15_t *weights_time_data = svdf_2_weights_time;
+	const int8_t *weights_feature_data = svdf_2_weights_feature;
+	const int16_t *weights_time_data = svdf_2_weights_time;
 
 	input_dims.n = SVDF_2_INPUT_BATCHES;
 	input_dims.h = SVDF_2_INPUT_SIZE;
@@ -616,7 +616,7 @@ ZTEST(cmsis_nn, test_svdf)
 	output_ctx.buf = malloc(scratch_size_out);
 
 	int8_t *input_data = malloc(input_round_size);
-	q15_t *state_data = malloc(sizeof(svdf_2_state));
+	int16_t *state_data = malloc(sizeof(svdf_2_state));
 	const bool null_bias = check_null_bias(svdf_2_biases,
 					       SVDF_2_DST_SIZE / SVDF_2_INPUT_BATCHES);
 
@@ -625,7 +625,7 @@ ZTEST(cmsis_nn, test_svdf)
 		for (int j = 0; j < number_inputs; j++) {
 			memcpy(input_data, svdf_2_input_sequence + j * input_round_size,
 			       input_round_size);
-			arm_status result = arm_svdf_s8(&input_ctx,
+			arm_cmsis_nn_status result = arm_svdf_state_s16_s8(&input_ctx,
 							&output_ctx,
 							&svdf_2_params,
 							&input_quant_params,
@@ -642,7 +642,7 @@ ZTEST(cmsis_nn, test_svdf)
 							null_bias == true ? NULL : svdf_2_biases,
 							&output_dims,
 							output_data);
-			zassert_equal(ARM_MATH_SUCCESS, result, "");
+			zassert_equal(ARM_CMSIS_NN_SUCCESS, result, "");
 		}
 
 		zassert_mem_equal(svdf_2_output_ref, output_data, sizeof(output_data), "");
