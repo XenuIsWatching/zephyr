@@ -421,7 +421,7 @@ CMSIS-DSP integration:
   collaborators:
     - galak
   files:
-    - modules/Kconfig.cmsis_dsp
+    - modules/cmsis_dsp/
     - tests/benchmarks/cmsis_dsp/
     - tests/lib/cmsis_dsp/
   labels:
@@ -2847,7 +2847,6 @@ West:
     - povergoing
   files:
     - modules/Kconfig.cmsis
-    - modules/Kconfig.cmsis_dsp
     - modules/Kconfig.cmsis_nn
   labels:
     - manifest-cmsis
