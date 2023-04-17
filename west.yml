@@ -122,7 +122,7 @@ manifest:
       revision: b7955c27e50485b7dafdc3888d7d6afdc2ac6d96
       path: modules/lib/chre
     - name: cmsis
-      revision: 74981bf893e8b10931464b9945e2143d99a3f0a3
+      revision: pull/21/head
       path: modules/hal/cmsis
       groups:
         - hal
@@ -323,9 +323,8 @@ manifest:
       revision: ee40f61b5725b6615f1abea4a78cc4d90ce144b8
       path: modules/audio/sof
     - name: tflite-micro
-      revision: 9156d050927012da87079064db59d07f03b8baf6
+      revision: pull/4/head
       path: modules/lib/tflite-micro
-      repo-path: tflite-micro
     - name: tinycrypt
       revision: 3e9a49d2672ec01435ffbf0d788db6d95ef28de0
       path: modules/crypto/tinycrypt
