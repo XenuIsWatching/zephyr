@@ -230,9 +230,9 @@ manifest:
       revision: ac71254757478f79aa88807c168e88aee70a330b
       path: modules/audio/sof
     - name: tflite-micro
-      revision: 9156d050927012da87079064db59d07f03b8baf6
+      revision: 6ee55db70843aa04c6538b181e6c667f42bb9834
+      url: https://github.com/XenuIsWatching/tflite-micro.git
       path: modules/lib/tflite-micro
-      repo-path: tflite-micro
     - name: tinycrypt
       revision: 3e9a49d2672ec01435ffbf0d788db6d95ef28de0
       path: modules/crypto/tinycrypt
