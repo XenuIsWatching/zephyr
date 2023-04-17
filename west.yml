@@ -32,17 +32,20 @@ manifest:
       revision: b7955c27e50485b7dafdc3888d7d6afdc2ac6d96
       path: modules/lib/chre
     - name: cmsis
-      revision: 74981bf893e8b10931464b9945e2143d99a3f0a3
+      revision: c18cacf72b94b33204409a3787388c1b6dd32aa5
+      url: https://github.com/XenuIsWatching/cmsis
       path: modules/hal/cmsis
       groups:
         - hal
     - name: cmsis-dsp
-      revision: 74981bf893e8b10931464b9945e2143d99a3f0a3
+      revision: c8308468d4a2c73abae5f12a3bc8dfa0ba1360cc
+      url: https://github.com/XenuIsWatching/CMSIS-DSP
       path: modules/hal/cmsis-dsp
       groups:
         - hal
     - name: cmsis-nn
-      revision: ffffffffffffffffffffffffffffffffffffffff
+      revision: 921c8b03ac89cc87fd025a78c4084e82430c3e19
+      url: https://github.com/XenuIsWatching/CMSIS-NN
       path: modules/hal/cmsis-nn
       groups:
         - hal
