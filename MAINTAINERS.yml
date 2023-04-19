@@ -434,7 +434,7 @@ CMSIS-NN integration:
   collaborators:
     - stephanosio
   files:
-    - modules/Kconfig.cmsis_nn
+    - modules/cmsis_nn/
     - tests/lib/cmsis_nn/
   labels:
     - "area: CMSIS-NN"
@@ -2847,7 +2847,6 @@ West:
     - povergoing
   files:
     - modules/Kconfig.cmsis
-    - modules/Kconfig.cmsis_nn
   labels:
     - manifest-cmsis
 
