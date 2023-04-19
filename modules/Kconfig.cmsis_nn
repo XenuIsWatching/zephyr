@@ -63,3 +63,8 @@ config CMSIS_NN_SVD
 	imply CMSIS_NN_NNSUPPORT
 	help
 	  This option enabled the NN libraries for Single Value Decomposition Filter layers.
+
+config CMSIS_NN_LSTM
+	bool "Long Short-Term Memory"
+	help
+	  This option enables the NN libraries for Long Short-Term Memory.
