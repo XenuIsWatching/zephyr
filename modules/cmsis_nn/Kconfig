@@ -1,8 +1,15 @@
-# Copyright (c) 2021, Commonwealth Scientific and Industrial Research
-# Organisation (CSIRO) ABN 41 687 119 230.
+# Copyright (c) 2023 Meta Platforms
 # SPDX-License-Identifier: Apache-2.0
 
-comment "CMSIS-NN Components"
+config ZEPHYR_CMSIS_NN_MODULE
+	bool
+
+menuconfig CMSIS_NN
+	bool "CMSIS-NN Support"
+	help
+	  This option enables the CMSIS-NN library.
+
+if CMSIS_NN
 
 config CMSIS_NN_ACTIVATION
 	bool "Activation"
@@ -68,3 +75,5 @@ config CMSIS_NN_LSTM
 	bool "Long Short-Term Memory"
 	help
 	  This option enables the NN libraries for Long Short-Term Memory.
+
+endif #CMSIS_NN
