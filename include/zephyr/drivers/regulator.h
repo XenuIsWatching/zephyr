@@ -3,6 +3,7 @@
  * Copyright (c) 2021 NXP
  * Copyright (c) 2022 Nordic Semiconductor ASA
  * Copyright (c) 2023 EPAM Systems
+ * Copyright (c) 2023 Meta Platforms
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -87,6 +88,10 @@ typedef int (*regulator_set_mode_t)(const struct device *dev,
 				    regulator_mode_t mode);
 typedef int (*regulator_get_mode_t)(const struct device *dev,
 				    regulator_mode_t *mode);
+typedef int (*regulator_set_active_discharge_t)(const struct device *dev,
+				    bool active_discharge);
+typedef int (*regulator_get_active_discharge_t)(const struct device *dev,
+				    bool *active_discharge);
 typedef int (*regulator_get_error_flags_t)(
 	const struct device *dev, regulator_error_flags_t *flags);
 
@@ -104,6 +109,8 @@ __subsystem struct regulator_driver_api {
 	regulator_get_current_limit_t get_current_limit;
 	regulator_set_mode_t set_mode;
 	regulator_get_mode_t get_mode;
+	regulator_set_active_discharge_t set_active_discharge;
+	regulator_get_active_discharge_t get_active_discharge;
 	regulator_get_error_flags_t get_error_flags;
 };
 
@@ -150,6 +157,8 @@ struct regulator_common_config {
 	uint8_t allowed_modes_cnt;
 	/** Regulator initial mode */
 	regulator_mode_t initial_mode;
+	/** Active discharge */
+	uint8_t active_discharge;
 	/** Flags (@reg REGULATOR_FLAGS). */
 	uint8_t flags;
 };
@@ -159,30 +168,32 @@ struct regulator_common_config {
  *
  * @param node_id Node identifier.
  */
-#define REGULATOR_DT_COMMON_CONFIG_INIT(node_id)                               \
-	{                                                                      \
-		.min_uv = DT_PROP_OR(node_id, regulator_min_microvolt,         \
-				     INT32_MIN),                               \
-		.max_uv = DT_PROP_OR(node_id, regulator_max_microvolt,         \
-				     INT32_MAX),                               \
-		.init_uv = DT_PROP_OR(node_id, regulator_init_microvolt,       \
-				      INT32_MIN),			       \
-		.min_ua = DT_PROP_OR(node_id, regulator_min_microamp,          \
-				     INT32_MIN),                               \
-		.max_ua = DT_PROP_OR(node_id, regulator_max_microamp,          \
-				     INT32_MAX),                               \
-		.startup_delay_us = DT_PROP_OR(node_id, startup_delay_us, 0),  \
-		.off_on_delay_us = DT_PROP_OR(node_id, off_on_delay_us, 0),    \
-		.allowed_modes = (const regulator_mode_t [])                   \
-			DT_PROP_OR(node_id, regulator_allowed_modes, {}),      \
-		.allowed_modes_cnt =                                           \
-			DT_PROP_LEN_OR(node_id, regulator_allowed_modes, 0),   \
-		.initial_mode = DT_PROP_OR(node_id, regulator_initial_mode,    \
-					   REGULATOR_INITIAL_MODE_UNKNOWN),    \
-		.flags = ((DT_PROP_OR(node_id, regulator_always_on, 0U) *      \
-			   REGULATOR_ALWAYS_ON) |                              \
-			  (DT_PROP_OR(node_id, regulator_boot_on, 0U) *        \
-			   REGULATOR_BOOT_ON)),                                \
+#define REGULATOR_DT_COMMON_CONFIG_INIT(node_id)                                     \
+	{                                                                            \
+		.min_uv = DT_PROP_OR(node_id, regulator_min_microvolt,               \
+				     INT32_MIN),                                     \
+		.max_uv = DT_PROP_OR(node_id, regulator_max_microvolt,               \
+				     INT32_MAX),                                     \
+		.init_uv = DT_PROP_OR(node_id, regulator_init_microvolt,             \
+				      INT32_MIN),			             \
+		.min_ua = DT_PROP_OR(node_id, regulator_min_microamp,                \
+				     INT32_MIN),                                     \
+		.max_ua = DT_PROP_OR(node_id, regulator_max_microamp,                \
+				     INT32_MAX),                                     \
+		.startup_delay_us = DT_PROP_OR(node_id, startup_delay_us, 0),        \
+		.off_on_delay_us = DT_PROP_OR(node_id, off_on_delay_us, 0),          \
+		.allowed_modes = (const regulator_mode_t [])                         \
+			DT_PROP_OR(node_id, regulator_allowed_modes, {}),            \
+		.allowed_modes_cnt =                                                 \
+			DT_PROP_LEN_OR(node_id, regulator_allowed_modes, 0),         \
+		.initial_mode = DT_PROP_OR(node_id, regulator_initial_mode,          \
+					   REGULATOR_INITIAL_MODE_UNKNOWN),          \
+		.active_discharge = DT_PROP_OR(node_id, regulator_active_discharge,  \
+					   UINT8_MAX),                               \
+		.flags = ((DT_PROP_OR(node_id, regulator_always_on, 0U) *            \
+			   REGULATOR_ALWAYS_ON) |                                    \
+			  (DT_PROP_OR(node_id, regulator_boot_on, 0U) *              \
+			   REGULATOR_BOOT_ON)),                                      \
 	}
 
 /**
@@ -629,6 +640,52 @@ static inline int regulator_get_mode(const struct device *dev,
 	}
 
 	return api->get_mode(dev, mode);
+}
+
+/**
+ * @brief Set active discharge setting.
+ *
+ * @param dev Regulator device instance.
+ * @param active_discharge Active discharge enable or disable.
+ *
+ * @retval 0 If successful.
+ * @retval -ENOSYS If function is not implemented.
+ * @retval -errno In case of any other error.
+ */
+static inline int regulator_set_active_discharge(const struct device *dev,
+				     bool active_discharge)
+{
+	const struct regulator_driver_api *api =
+		(const struct regulator_driver_api *)dev->api;
+
+	if (api->set_active_discharge == NULL) {
+		return -ENOSYS;
+	}
+
+	return api->set_active_discharge(dev, active_discharge);
+}
+
+/**
+ * @brief Get active discharge setting.
+ *
+ * @param dev Regulator device instance.
+ * @param[out] active_discharge Where active discharge will be stored.
+ *
+ * @retval 0 If successful.
+ * @retval -ENOSYS If function is not implemented.
+ * @retval -errno In case of any other error.
+ */
+static inline int regulator_get_active_discharge(const struct device *dev,
+				     bool *active_discharge)
+{
+	const struct regulator_driver_api *api =
+		(const struct regulator_driver_api *)dev->api;
+
+	if (api->get_active_discharge == NULL) {
+		return -ENOSYS;
+	}
+
+	return api->get_active_discharge(dev, active_discharge);
 }
 
 /**
