@@ -761,7 +761,7 @@ union i3c_ccc_getmxds {
 
 /** Get Max Data Speed (GETMXDS) - Max Sustained Data Rate bitmask. */
 #define I3C_CCC_GETMXDS_MAXWR_MAX_SDR_FSCL_MASK			\
-	(0x07U << I3C_CCC_GET_MXDS_MAXWR_MAX_SDR_FSCL_SHIFT)
+	(0x07U << I3C_CCC_GETMXDS_MAXWR_MAX_SDR_FSCL_SHIFT)
 
 /**
  * @brief Get Max Data Speed (GETMXDS) - maxWr - Max Sustained Data Rate
@@ -803,7 +803,7 @@ union i3c_ccc_getmxds {
 
 /** Get Max Data Speed (GETMXDS) - maxRd - Max Sustained Data Rate bitmask. */
 #define I3C_CCC_GETMXDS_MAXRD_MAX_SDR_FSCL_MASK			\
-	(0x07U << I3C_CCC_GET_MXDS_MAXRD_MAX_SDR_FSCL_SHIFT)
+	(0x07U << I3C_CCC_GETMXDS_MAXRD_MAX_SDR_FSCL_SHIFT)
 
 /**
  * @brief Get Max Data Speed (GETMXDS) - maxRd - Max Sustained Data Rate
