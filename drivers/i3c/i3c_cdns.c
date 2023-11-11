@@ -948,7 +948,7 @@ static int cdns_i3c_do_ccc(const struct device *dev, struct i3c_ccc_payload *pay
 {
 	const struct cdns_i3c_config *config = dev->config;
 	struct cdns_i3c_data *data = dev->data;
-	struct cdns_i3c_cmd *dcmd = &data->xfer.cmds[0];
+	struct cdns_i3c_cmd *cmd;
 	int ret = 0;
 	int num_cmds = 0;
 
@@ -1011,68 +1011,67 @@ static int cdns_i3c_do_ccc(const struct device *dev, struct i3c_ccc_payload *pay
 		goto error;
 	}
 
-	dcmd->cmd1 = CMD1_FIFO_CCC(payload->ccc.id);
-	dcmd->cmd0 = CMD0_FIFO_IS_CCC;
-	dcmd->len = 0;
+	size_t cmd_idx = 0;
 
-	size_t idx = 0;
+ 	cmd = &data->xfer.cmds[cmd_idx];
+	cmd->cmd1 = CMD1_FIFO_CCC(payload->ccc.id);
+	cmd->cmd0 = CMD0_FIFO_IS_CCC | CMD0_FIFO_BCH;
+	cmd->len = 0;
 
 	if (payload->ccc.data_len > 0) {
 		/* Write additional data for CCC if needed */
-		dcmd->buf = payload->ccc.data;
-		dcmd->len = payload->ccc.data_len;
-		dcmd->cmd0 |= CMD0_FIFO_PL_LEN(payload->ccc.data_len);
-	} else if (payload->targets.num_targets > 0) {
-		dcmd->buf = payload->targets.payloads[0].data;
-		dcmd->len = payload->targets.payloads[0].data_len;
-		dcmd->cmd0 |= CMD0_FIFO_DEV_ADDR(payload->targets.payloads[0].addr) |
-			      CMD0_FIFO_PL_LEN(payload->targets.payloads[0].data_len);
-		if (payload->targets.payloads[0].rnw) {
-			dcmd->cmd0 |= CMD0_FIFO_RNW;
-		}
-		idx++;
-	}
-	num_cmds++;
+		cmd->buf = payload->ccc.data;
+		cmd->len = payload->ccc.data_len;
+		cmd->cmd0 |= CMD0_FIFO_PL_LEN(payload->ccc.data_len);
+		cmd_idx++;
+	} 
 
+	/* if this is a direct CCC */
 	if (!i3c_ccc_is_payload_broadcast(payload)) {
-		/*
-		 * If there are payload(s) for each target,
-		 * RESTART and then send payload for each target.
+		/* if the the CCC has no data bytes, then the target payload must be in
+		 * the same command buffer
 		 */
-		while (idx < payload->targets.num_targets) {
-			num_cmds++;
-			struct cdns_i3c_cmd *cmd = &data->xfer.cmds[idx + 1];
-			struct i3c_ccc_target_payload *tgt_payload =
-				&payload->targets.payloads[idx];
-			/* Send repeated start on all transfers except the last */
-			if (idx < (payload->targets.num_targets - 1)) {
-				cmd->cmd0 |= CMD0_FIFO_RSBC;
-			}
-			cmd->cmd0 |= CMD0_FIFO_DEV_ADDR(tgt_payload->addr);
-			if (tgt_payload->rnw) {
+		for (int i = 0; i < payload->targets.num_targets; i++) {
+			/* for a short CCC, BCH must be 0 and RSBC must be 1 */
+			cmd = &data->xfer.cmds[cmd_idx++];
+			cmd->buf = payload->targets.payloads[i].data;
+			cmd->len = payload->targets.payloads[i].data_len;
+			cmd->cmd0 |= CMD0_FIFO_DEV_ADDR(payload->targets.payloads[i].addr) |
+					CMD0_FIFO_PL_LEN(payload->targets.payloads[i].data_len);
+			if (payload->targets.payloads[i].rnw) {
 				cmd->cmd0 |= CMD0_FIFO_RNW;
 			}
-
-			cmd->buf = tgt_payload->data;
-			cmd->len = tgt_payload->data_len;
-
-			idx++;
+			if (cmd_idx < (payload->targets.num_targets - 1)) {
+				cmd->cmd0 |= CMD0_FIFO_RSBC;
+			}
 		}
 	}
 
 	data->xfer.ret = -ETIMEDOUT;
-	data->xfer.num_cmds = num_cmds;
+	data->xfer.num_cmds = cmd_idx - 1;
 
 	cdns_i3c_start_transfer(dev);
 	if (k_sem_take(&data->xfer.complete, K_MSEC(1000)) != 0) {
 		cdns_i3c_cancel_transfer(dev);
 	}
 
+	/* retrieve the error code */
+	ret = data->xfer.ret;
+
 	if (data->xfer.ret < 0) {
 		LOG_ERR("%s: CCC[0x%02x] error (%d)", dev->name, payload->ccc.id, data->xfer.ret);
+		goto error;
 	}
 
-	ret = data->xfer.ret;
+	/* retrieve actual length of data returned from ccc */
+	if (!i3c_ccc_is_payload_broadcast(payload)) {
+		for (int i = 0; i < payload->targets.num_targets; i++) {
+			if (payload->targets.payloads[i].rnw) {
+				payload->targets.payloads[i].data_len = data->xfer.cmds[i].len;
+			}
+		}
+	}
+
 error:
 	k_mutex_unlock(&data->bus_lock);
 
@@ -1260,7 +1259,6 @@ static void cdns_i3c_complete_transfer(const struct device *dev)
 	const struct cdns_i3c_config *config = dev->config;
 	uint32_t cmdr;
 	uint32_t id = 0;
-	uint32_t rx = 0;
 	int ret = 0;
 	struct cdns_i3c_cmd *cmd;
 
@@ -1287,8 +1285,8 @@ static void cdns_i3c_complete_transfer(const struct device *dev)
 
 		/* Read any rx data into buffer */
 		if (cmd->cmd0 & CMD0_FIFO_RNW) {
-			rx = MIN(CMDR_XFER_BYTES(cmdr), cmd->len);
-			ret = cdns_i3c_read_rx_fifo(config, cmd->buf, rx);
+			cmd->len = MIN(CMDR_XFER_BYTES(cmdr), cmd->len);
+			ret = cdns_i3c_read_rx_fifo(config, cmd->buf, cmd->len);
 		}
 
 		/* Record error */
@@ -1744,6 +1742,15 @@ static int cdns_i3c_transfer(const struct device *dev, struct i3c_device_desc *t
 	}
 
 	ret = data->xfer.ret;
+	if (ret < 0) {
+		goto error;
+	}
+
+	/* as the target controls when EoD occurs, write back the actual length of data */
+	for (int i = 0; i < num_msgs; i++) {
+		msgs[i].len = data->xfer.cmds[i].len;
+	}
+
 error:
 	k_mutex_unlock(&data->bus_lock);
 
