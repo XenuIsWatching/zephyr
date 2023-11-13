@@ -687,13 +687,6 @@ union i3c_ccc_getmxds {
 
 	struct {
 		/**
-		 * Defining Byte 0x00: WRRDTURN
-		 *
-		 * @see i3c_ccc_getmxds::fmt2
-		 */
-		uint8_t wrrdturn;
-
-		/**
 		 * Defining Byte 0x91: CRHDLY
 		 * - Bit[2]: Set Bus Actibity State
 		 * - Bit[1:0]: Controller Handoff Activity State
@@ -701,6 +694,33 @@ union i3c_ccc_getmxds {
 		uint8_t crhdly1;
 	} fmt3;
 } __packed;
+
+/**
+ * @brief Defining byte values for GETMXDS Format 3.
+ */
+enum i3c_ccc_getstatus_defbyte {
+	/** WRRDTURN - Write/Read speed parameters, and optional Read Turnaround time.
+	 *  Will return with either format 1 or 2.
+	 */
+	GETMXDS_FORMAT_3_WRRDTURN = 0x00U,
+
+	/** CRHDLY - Describes delay parameters for a Controller-capable Device, and its
+	 * expected
+	 * Activity State during the Controller handoff.
+	 */
+	GETMXDS_FORMAT_3_CRHDLY = 0x91U,
+};
+
+/**
+ * @brief Indicate which format of GETMXDS to use.
+ */
+enum i3c_ccc_getmxds_fmt {
+	/** GETMXDS Format 1 or 2 */
+	GETMXDS_FORMAT_1_2,
+
+	/** GETMXDS Format 3 */
+	GETMXDS_FORMAT_3,
+};
 
 /** Get Max Data Speed (GETMXDS) - Default Max Sustained Data Rate. */
 #define I3C_CCC_GETMXDS_MAX_SDR_FSCL_MAX			0
@@ -1250,6 +1270,26 @@ int i3c_ccc_do_getmrl(const struct i3c_device_desc *target,
 int i3c_ccc_do_getstatus(const struct i3c_device_desc *target,
 			 union i3c_ccc_getstatus *status,
 			 enum i3c_ccc_getstatus_fmt fmt,
+			 enum i3c_ccc_getstatus_defbyte defbyte);
+
+/**
+ * @brief Single target MXDS to Get Max Data Speed.
+ *
+ * Helper function to do GETMXDS (Get Max Data Speed) of
+ * one target.
+ *
+ * Note this should only be used if bit 0 of the BCR is set
+ *
+ * @param[in] target Pointer to the target device descriptor.
+ * @param[out] status Pointer to GETMXDS payload.
+ * @param[in] fmt Which GETMXDS to use.
+ * @param[in] defbyte Defining Byte if using format 3.
+ *
+ * @return @see i3c_do_ccc
+ */
+int i3c_ccc_do_getmxds(const struct i3c_device_desc *target,
+			 union i3c_ccc_getmxds *mxds,
+			 enum i3c_ccc_getmxds_fmt fmt,
 			 enum i3c_ccc_getstatus_defbyte defbyte);
 
 /**

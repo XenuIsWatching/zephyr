@@ -1010,6 +1010,9 @@ struct i3c_device_desc {
 		uint32_t max_read_turnaround;
 	} data_speed;
 
+	
+	uint8_t crhdly;
+
 	struct {
 		/** Maximum Read Length */
 		uint16_t mrl;

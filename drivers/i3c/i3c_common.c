@@ -548,6 +548,19 @@ int i3c_device_basic_info_get(struct i3c_device_desc *target)
 		LOG_DBG("No settable limit for GETMWL");
 	}
 
+	if (target->bcr & I3C_BCR_MAX_DATA_SPEED_LIMIT) {
+		/* GETMXDS */
+		union i3c_ccc_getmxds mxds;
+		ret = i3c_ccc_getmxds(target, &mxds, GETMXDS_FORMAT_1_2, 0);
+		if (ret != 0) {
+			goto out;
+		}
+		target->data_speed.maxrd = mxds.fmt1.maxwr;
+		target->data_speed.maxwd = mxds.fmt1.maxrd;
+		
+		target->data_speed.max_read_turnaround = sys_get_le24(mxds.fmt2.maxrdturn);
+	}
+
 	target->dcr = dcr.dcr;
 	target->data_length.mrl = mrl.len;
 	target->data_length.mwl = mwl.len;
