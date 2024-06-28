@@ -56,7 +56,7 @@ enum csr_parity_val {
 #define MODE_PAR_SHIFT	  (3)
 #define MODE_PAR_SIZE	  (3)
 #define MODE_CHRL_MASK	  (0x3 << 1)
-#define MODE_CHRL_SHIFT	  (2)
+#define MODE_CHRL_SHIFT	  (1)
 #define MODE_CHRL_SIZE	  (2)
 #define MODE_CLKS_MASK	  (1 << 0)
 #define MODE_CLKS_SHIFT	  (0)
@@ -90,6 +90,9 @@ enum csr_parity_val {
 #define CSR_REMPTY_SHIFT (1)
 #define CSR_RTRIG_MASK	 (1 << 0)
 #define CSR_RTRIG_SHIFT	 (0)
+
+#define MCR_FCM_MASK  (1 << 5)
+#define MCR_FCM_SHIFT (5)
 
 #define RXDATA_MASK   0xFF /* Receive Data Mask */
 #define MAX_FIFO_SIZE (64)
@@ -130,8 +133,6 @@ struct uart_cdns_device_config {
 	uint32_t port;
 	uint32_t bdiv;
 	uint32_t sys_clk_freq;
-	uint32_t baud_rate;
-	uint8_t parity;
 	void (*cfg_func)(void);
 };
 
@@ -140,6 +141,7 @@ struct uart_cdns_data {
 	uart_irq_callback_user_data_t callback;
 	void *cb_data;
 #endif
+	struct uart_config current_config;
 };
 
 #endif /* ZEPHYR_DRIVERS_SERIAL_UART_CDNS_H_ */
