@@ -1179,6 +1179,54 @@ static int cmd_i3c_ccc_enttm(const struct shell *sh, size_t argc, char **argv)
 	return ret;
 }
 
+/* i3c ccc getacccr <device> <target> */
+static int cmd_i3c_ccc_getacccr(const struct shell *sh, size_t argc, char **argv)
+{
+	const struct device *dev, *tdev;
+	struct i3c_device_desc *desc;
+	struct i3c_ccc_address handoff_address;
+	int ret;
+
+	dev = device_get_binding(argv[ARGV_DEV]);
+	if (!dev) {
+		shell_error(sh, "I3C: Device driver %s not found.", argv[ARGV_DEV]);
+		return -ENODEV;
+	}
+	tdev = device_get_binding(argv[ARGV_TDEV]);
+	if (!tdev) {
+		shell_error(sh, "I3C: Device driver %s not found.", argv[ARGV_TDEV]);
+		return -ENODEV;
+	}
+	desc = get_i3c_attached_desc_from_dev_name(dev, tdev->name);
+	if (!desc) {
+		shell_error(sh, "I3C: Device %s not attached to bus.", tdev->name);
+		return -ENODEV;
+	}
+
+	if (!i3c_device_is_controller_capable(desc)) {
+		shell_error(sh, "I3C: Not a Controller Capable Device");
+		return -EINVAL;
+	}
+
+	ret = i3c_ccc_do_getacccr(desc, &handoff_address);
+	if (ret < 0) {
+		shell_error(sh, "I3C: unable to send CCC GETACCCR.");
+		return ret;
+	}
+
+	/* Verify Odd Parity and Correct Dynamic Address Reply */
+	if ((i3c_odd_parity(handoff_address.addr >> 1) != (handoff_address.addr & BIT(0))) ||
+	    (handoff_address.addr >> 1 != desc->dynamic_addr)) {
+		shell_error(sh, "I3C: invalid returned address 0x%02x; expected 0x%02x",
+			handoff_address.addr, desc->dynamic_addr);
+		return -EIO;
+	}
+
+	shell_print(sh, "I3C: Controller Handoff successful");
+
+	return ret;
+}
+
 /* i3c ccc rstact_bc <device> <defining byte> */
 static int cmd_i3c_ccc_rstact_bc(const struct shell *sh, size_t argc, char **argv)
 {
@@ -2369,6 +2417,10 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 		      "Send CCC ENTTM\n"
 		      "Usage: ccc enttm <device> <defining byte>",
 		      cmd_i3c_ccc_enttm, 3, 0),
+	SHELL_CMD_ARG(enttm, &dsub_i3c_device_name,
+		      "Send CCC GETACCCR\n"
+		      "Usage: ccc getacccr <device> <target>",
+		      cmd_i3c_ccc_getacccr, 3, 0),
 	SHELL_CMD_ARG(rstact_bc, &dsub_i3c_device_name,
 		      "Send CCC RSTACT BC\n"
 		      "Usage: ccc rstact_bc <device> <defining byte>",
