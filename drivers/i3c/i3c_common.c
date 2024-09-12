@@ -570,6 +570,17 @@ int i3c_device_basic_info_get(struct i3c_device_desc *target)
 		ret = 0;
 	}
 
+	/* CRCAPS */
+	if ((target->getcaps.getcap3 & I3C_CCC_GETCAPS3_GETCAPS_DEFINING_BYTE_SUPPORT) &&
+		    (i3c_device_is_controller_capable(target))) {
+		ret = i3c_ccc_do_getcaps_fmt2(target, &caps, GETCAPS_FORMAT_2_CRCAPS);
+		if (ret != 0) {
+			goto out;
+		}
+
+		memcpy(&target->crcaps, &caps, sizeof(target->crcaps));
+	}
+
 	/* GETMXDS */
 	if (target->bcr & I3C_BCR_MAX_DATA_SPEED_LIMIT) {
 		ret = i3c_ccc_do_getmxds_fmt2(target, &mxds);
@@ -580,9 +591,19 @@ int i3c_device_basic_info_get(struct i3c_device_desc *target)
 		target->data_speed.maxrd = mxds.fmt2.maxrd;
 		target->data_speed.maxwr = mxds.fmt2.maxwr;
 		target->data_speed.max_read_turnaround = sys_get_le24(mxds.fmt2.maxrdturn);
+
+		/* Get CRHDLY if supported */
+		if ((target->data_speed.maxwr & I3C_CCC_GETMXDS_MAXWR_DEFINING_BYTE_SUPPORT) &&
+		    (i3c_device_is_controller_capable(target))) {
+			ret = i3c_ccc_do_getmxds_fmt3(target, &mxds, GETMXDS_FORMAT_3_CRHDLY);
+			if (ret != 0) {
+				goto out;
+			}
+
+			target->crhdly1 = mxds.fmt3.crhdly1;
+		}
 	}
 
-	target->dcr = dcr.dcr;
 	target->data_length.mrl = mrl.len;
 	target->data_length.mwl = mwl.len;
 	target->data_length.max_ibi = mrl.ibi_len;
