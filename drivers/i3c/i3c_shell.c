@@ -691,11 +691,13 @@ static int cmd_i3c_ccc_setaasa(const struct shell *sh, size_t argc, char **argv)
 	return ret;
 }
 
-/* i3c ccc setdasa <device> <target> */
+/* i3c ccc setdasa <device> <target> <dynamic address> */
 static int cmd_i3c_ccc_setdasa(const struct shell *sh, size_t argc, char **argv)
 {
 	const struct device *dev, *tdev;
 	struct i3c_device_desc *desc;
+	struct i3c_driver_data *data;
+	struct i3c_ccc_address da;
 	int ret;
 
 	dev = device_get_binding(argv[ARGV_DEV]);
@@ -714,7 +716,14 @@ static int cmd_i3c_ccc_setdasa(const struct shell *sh, size_t argc, char **argv)
 		return -ENODEV;
 	}
 
-	ret = i3c_ccc_do_setdasa(desc);
+	data = (struct i3c_driver_data *)dev->data;
+	da.addr = strtol(argv[3], NULL, 16) << 1;
+	/* check if the addressed is free */
+	if (!i3c_addr_slots_is_free(&data->attached_dev.addr_slots, da.addr)) {
+		shell_error(sh, "I3C: Address 0x%02x is already in use.", da.addr);
+		return -EINVAL;
+	}
+	ret = i3c_ccc_do_setdasa(desc, da);
 	if (ret < 0) {
 		shell_error(sh, "I3C: unable to send CCC SETDASA.");
 		return ret;
@@ -733,7 +742,7 @@ static int cmd_i3c_ccc_setdasa(const struct shell *sh, size_t argc, char **argv)
 	return ret;
 }
 
-/* i3c ccc setnewda <device> <target> <dynamic address>*/
+/* i3c ccc setnewda <device> <target> <dynamic address> */
 static int cmd_i3c_ccc_setnewda(const struct shell *sh, size_t argc, char **argv)
 {
 	const struct device *dev, *tdev;
@@ -760,7 +769,7 @@ static int cmd_i3c_ccc_setnewda(const struct shell *sh, size_t argc, char **argv
 	}
 
 	data = (struct i3c_driver_data *)dev->data;
-	new_da.addr = strtol(argv[3], NULL, 16);
+	new_da.addr = strtol(argv[3], NULL, 16) << 1;
 	/* check if the addressed is free */
 	if (!i3c_addr_slots_is_free(&data->attached_dev.addr_slots, new_da.addr)) {
 		shell_error(sh, "I3C: Address 0x%02x is already in use.", new_da.addr);
@@ -2368,8 +2377,8 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 		      cmd_i3c_ccc_setaasa, 2, 0),
 	SHELL_CMD_ARG(setdasa, &dsub_i3c_device_attached_name,
 		      "Send CCC SETDASA\n"
-		      "Usage: ccc setdasa <device> <target>",
-		      cmd_i3c_ccc_setdasa, 3, 0),
+		      "Usage: ccc setdasa <device> <target> <dynamic address>",
+		      cmd_i3c_ccc_setdasa, 4, 0),
 	SHELL_CMD_ARG(setnewda, &dsub_i3c_device_attached_name,
 		      "Send CCC SETNEWDA\n"
 		      "Usage: ccc setnewda <device> <target> <dynamic address>",
