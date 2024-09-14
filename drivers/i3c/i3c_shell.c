@@ -100,8 +100,8 @@ DT_FOREACH_STATUS_OKAY(nxp_mcux_i3c, I3C_CTRL_FN)
 const struct i3c_ctrl i3c_list[] = {
 	/* zephyr-keep-sorted-start */
 	DT_FOREACH_STATUS_OKAY(cdns_i3c, I3C_CTRL_LIST_ENTRY)
-	DT_FOREACH_STATUS_OKAY(nuvoton_npcx_i3c, I3C_CTRL_LIST_ENTRY)
-	DT_FOREACH_STATUS_OKAY(nxp_mcux_i3c, I3C_CTRL_LIST_ENTRY)
+		DT_FOREACH_STATUS_OKAY(nuvoton_npcx_i3c, I3C_CTRL_LIST_ENTRY)
+			DT_FOREACH_STATUS_OKAY(nxp_mcux_i3c, I3C_CTRL_LIST_ENTRY)
 	/* zephyr-keep-sorted-stop */
 };
 
@@ -191,8 +191,7 @@ static int cmd_i3c_info(const struct shell *sh, size_t argc, char **argv)
 		/* TODO: is this needed? */
 		tdev = device_get_binding(argv[ARGV_TDEV]);
 		if (!tdev) {
-			shell_error(sh, "I3C: Target Device driver %s not found.",
-				    argv[ARGV_DEV]);
+			shell_error(sh, "I3C: Target Device driver %s not found.", argv[ARGV_DEV]);
 			return -ENODEV;
 		}
 
@@ -422,15 +421,15 @@ static int i3c_write_from_buffer(const struct shell *sh, char *s_dev_name, char 
 /* i3c write <device> <dev_addr> <reg_addr> [<byte1>, ...] */
 static int cmd_i3c_write(const struct shell *sh, size_t argc, char **argv)
 {
-	return i3c_write_from_buffer(sh, argv[ARGV_DEV], argv[ARGV_TDEV], argv[ARGV_REG],
-				     &argv[4], argc - 4);
+	return i3c_write_from_buffer(sh, argv[ARGV_DEV], argv[ARGV_TDEV], argv[ARGV_REG], &argv[4],
+				     argc - 4);
 }
 
 /* i3c write_byte <device> <dev_addr> <reg_addr> <value> */
 static int cmd_i3c_write_byte(const struct shell *sh, size_t argc, char **argv)
 {
-	return i3c_write_from_buffer(sh, argv[ARGV_DEV], argv[ARGV_TDEV], argv[ARGV_REG],
-				     &argv[4], 1);
+	return i3c_write_from_buffer(sh, argv[ARGV_DEV], argv[ARGV_TDEV], argv[ARGV_REG], &argv[4],
+				     1);
 }
 
 static int i3c_read_to_buffer(const struct shell *sh, char *s_dev_name, char *s_tdev_name,
@@ -480,8 +479,7 @@ static int cmd_i3c_read_byte(const struct shell *sh, size_t argc, char **argv)
 	uint8_t out;
 	int ret;
 
-	ret = i3c_read_to_buffer(sh, argv[ARGV_DEV], argv[ARGV_TDEV], argv[ARGV_REG], &out,
-				 1);
+	ret = i3c_read_to_buffer(sh, argv[ARGV_DEV], argv[ARGV_TDEV], argv[ARGV_REG], &out, 1);
 	if (ret == 0) {
 		shell_print(sh, "Output: 0x%x", out);
 	}
@@ -636,8 +634,7 @@ static int cmd_i3c_ccc_rstdaa(const struct shell *sh, size_t argc, char **argv)
 			struct i3c_device_desc *desc =
 				CONTAINER_OF(node, struct i3c_device_desc, node);
 			desc->dynamic_addr = 0;
-			shell_print(sh, "Reset dynamic address for device %s",
-				    desc->dev->name);
+			shell_print(sh, "Reset dynamic address for device %s", desc->dev->name);
 		}
 	}
 
@@ -1224,7 +1221,7 @@ static int cmd_i3c_ccc_getacccr(const struct shell *sh, size_t argc, char **argv
 	if ((i3c_odd_parity(handoff_address.addr >> 1) != (handoff_address.addr & BIT(0))) ||
 	    (handoff_address.addr >> 1 != desc->dynamic_addr)) {
 		shell_error(sh, "I3C: invalid returned address 0x%02x; expected 0x%02x",
-			handoff_address.addr, desc->dynamic_addr);
+			    handoff_address.addr, desc->dynamic_addr);
 		return -EIO;
 	}
 
@@ -1714,9 +1711,8 @@ static int cmd_i3c_ccc_getcaps(const struct shell *sh, size_t argc, char **argv)
 				    caps.fmt2.vtcaps[1]);
 		}
 	} else {
-		shell_print(sh, "GETCAPS: 0x%02x; 0x%02x; 0x%02x; 0x%02x",
-			    caps.fmt1.getcaps[0], caps.fmt1.getcaps[1], caps.fmt1.getcaps[2],
-			    caps.fmt1.getcaps[3]);
+		shell_print(sh, "GETCAPS: 0x%02x; 0x%02x; 0x%02x; 0x%02x", caps.fmt1.getcaps[0],
+			    caps.fmt1.getcaps[1], caps.fmt1.getcaps[2], caps.fmt1.getcaps[3]);
 		memcpy(&desc->getcaps, &caps, sizeof(desc->getcaps));
 	}
 
@@ -1916,8 +1912,7 @@ static int cmd_i3c_ccc_getmxds(const struct shell *sh, size_t argc, char **argv)
 
 	if (fmt == GETMXDS_FORMAT_3) {
 		if (defbyte == GETMXDS_FORMAT_3_WRRDTURN) {
-			shell_print(sh,
-				    "WRRDTURN: maxwr 0x%02x; maxrd 0x%02x; maxrdturn 0x%06x",
+			shell_print(sh, "WRRDTURN: maxwr 0x%02x; maxrd 0x%02x; maxrdturn 0x%06x",
 				    mxds.fmt3.wrrdturn[0], mxds.fmt3.wrrdturn[1],
 				    sys_get_le24(&mxds.fmt3.wrrdturn[2]));
 			/* Update values in descriptor */
@@ -2149,8 +2144,7 @@ static int cmd_i3c_i2c_scan(const struct shell *sh, size_t argc, char **argv)
 
 				ret = i3c_attach_i2c_device(&desc);
 				if (ret < 0) {
-					shell_error(sh,
-						    "I3C: unable to attach I2C addr 0x%02x.",
+					shell_error(sh, "I3C: unable to attach I2C addr 0x%02x.",
 						    desc.addr);
 				}
 
@@ -2167,8 +2161,7 @@ static int cmd_i3c_i2c_scan(const struct shell *sh, size_t argc, char **argv)
 
 				ret = i3c_detach_i2c_device(&desc);
 				if (ret < 0) {
-					shell_error(sh,
-						    "I3C: unable to detach I2C addr 0x%02x.",
+					shell_error(sh, "I3C: unable to detach I2C addr 0x%02x.",
 						    desc.addr);
 				}
 			} else if (slot == I3C_ADDR_SLOT_STATUS_I3C_DEV) {
