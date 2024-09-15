@@ -86,6 +86,32 @@ out:
 	return ret;
 }
 
+int i3c_ibi_work_enqueue_controller_request(struct i3c_device_desc *target)
+{
+	sys_snode_t *node;
+	struct i3c_ibi_work *ibi_node;
+	int ret;
+
+	node = sys_slist_get(&i3c_ibi_work_nodes_free);
+	if (node == NULL) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	ibi_node = (struct i3c_ibi_work *)node;
+
+	ibi_node->type = I3C_IBI_CONTROLLER_ROLE_REQUEST;
+	ibi_node->target = target;
+
+	ret = ibi_work_submit(ibi_node);
+	if (ret >= 0) {
+		ret = 0;
+	}
+
+out:
+	return ret;
+}
+
 int i3c_ibi_work_enqueue_hotjoin(const struct device *dev)
 {
 	sys_snode_t *node;
