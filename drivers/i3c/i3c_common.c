@@ -702,7 +702,7 @@ int i3c_bus_deftgts(const struct device *dev)
 	}
 
 	/* Allocate memory for the struct with enough space for the targets */
-	deftgts = malloc(data_len);
+	deftgts = k_malloc(data_len);
 	if (!deftgts) {
 		return -ENOMEM;
 	}
