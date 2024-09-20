@@ -664,12 +664,9 @@ static int i3c_bus_setdasa(const struct device *dev,
 
 bool i3c_bus_has_sec_controller(const struct device *dev)
 {
-	struct i3c_driver_data *data = (struct i3c_driver_data *)dev->data;
-	sys_snode_t *node;
+	struct i3c_device_desc *i3c_desc;
 
-	SYS_SLIST_FOR_EACH_NODE(&data->attached_dev.devices.i3c, node) {
-		struct i3c_device_desc *i3c_desc = CONTAINER_OF(node, struct i3c_device_desc, node);
-
+	i3c_bus_for_each_i3cdev(dev, i3c_desc) {
 		if (i3c_device_is_controller_capable(i3c_desc)) {
 			return true;
 		}
@@ -683,7 +680,8 @@ int i3c_bus_deftgts(const struct device *dev)
 	struct i3c_driver_data *data = (struct i3c_driver_data *)dev->data;
 	struct i3c_config_target config_target;
 	struct i3c_ccc_deftgts *deftgts;
-	sys_snode_t *node;
+	struct i3c_device_desc *i3c_desc;
+	struct i3c_i2c_device_desc *i3c_i2c_desc;
 	int ret;
 	uint8_t n = 0;
 	size_t num_of_targets = sys_slist_len(&data->attached_dev.devices.i3c) +
@@ -723,9 +721,7 @@ int i3c_bus_deftgts(const struct device *dev)
 	/*
 	 * Loop through each attached I3C device and add it to the payload
 	 */
-	SYS_SLIST_FOR_EACH_NODE(&data->attached_dev.devices.i3c, node) {
-		struct i3c_device_desc *i3c_desc = CONTAINER_OF(node, struct i3c_device_desc, node);
-
+	i3c_bus_for_each_i3cdev(dev, i3c_desc) {
 		deftgts->targets[n].addr = i3c_desc->dynamic_addr << 1;
 		deftgts->targets[n].dcr = i3c_desc->dcr;
 		deftgts->targets[n].bcr = i3c_desc->bcr;
@@ -736,10 +732,7 @@ int i3c_bus_deftgts(const struct device *dev)
 	/*
 	 * Loop through each attached I2C device and add it to the payload
 	 */
-	SYS_SLIST_FOR_EACH_NODE(&data->attached_dev.devices.i2c, node) {
-		struct i3c_i2c_device_desc *i3c_i2c_desc =
-			CONTAINER_OF(node, struct i3c_i2c_device_desc, node);
-
+	i3c_bus_for_each_i2cdev(dev, i3c_i2c_desc) {
 		deftgts->targets[n].addr = 0;
 		deftgts->targets[n].lvr = i3c_i2c_desc->lvr;
 		deftgts->targets[n].bcr = 0;

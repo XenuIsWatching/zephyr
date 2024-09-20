@@ -1207,6 +1207,30 @@ struct i3c_driver_data {
 };
 
 /**
+ * i3c_bus_for_each_i3cdev() - iterate over all I3C devices present on the bus
+ * @bus: the I3C bus
+ * @desc: and I3C device descriptor pointer updated to point to the current slot
+ *	 at each iteration of the loop
+ *
+ * Iterate over all I3C devs present on the bus.
+ */
+#define i3c_bus_for_each_i3cdev(bus, desc)                                                         \
+	SYS_SLIST_FOR_EACH_CONTAINER(                                                              \
+		&((struct i3c_driver_data *)(bus->data))->attached_dev.devices.i3c, desc, node)
+
+/**
+ * i3c_bus_for_each_i2cdev() - iterate over all I2C devices present on the bus
+ * @bus: the I3C bus
+ * @dev: an I2C device descriptor pointer updated to point to the current slot
+ *	 at each iteration of the loop
+ *
+ * Iterate over all I2C devs present on the bus.
+ */
+#define i3c_bus_for_each_i2cdev(bus, desc)                                                         \
+	SYS_SLIST_FOR_EACH_CONTAINER(                                                              \
+		&((struct i3c_driver_data *)(bus->data))->attached_dev.devices.i2c, desc, node)
+
+/**
  * @brief Find a I3C target device descriptor by ID.
  *
  * This finds the I3C target device descriptor in the device list

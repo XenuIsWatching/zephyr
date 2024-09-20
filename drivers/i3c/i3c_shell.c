@@ -36,8 +36,7 @@ struct i3c_ctrl {
 	static void node_id##cmd_i3c_attached_get(size_t idx, struct shell_static_entry *entry)    \
 	{                                                                                          \
 		const struct device *dev = DEVICE_DT_GET(node_id);                                 \
-		struct i3c_driver_data *data;                                                      \
-		sys_snode_t *node;                                                                 \
+		struct i3c_device_desc *i3c_desc;                                                  \
 		size_t cnt = 0;                                                                    \
                                                                                                    \
 		entry->syntax = NULL;                                                              \
@@ -45,17 +44,15 @@ struct i3c_ctrl {
 		entry->subcmd = NULL;                                                              \
 		entry->help = NULL;                                                                \
                                                                                                    \
-		data = (struct i3c_driver_data *)dev->data;                                        \
-		if (!sys_slist_is_empty(&data->attached_dev.devices.i3c)) {                        \
-			SYS_SLIST_FOR_EACH_NODE(&data->attached_dev.devices.i3c, node) {           \
-				if (cnt == idx) {                                                  \
-					struct i3c_device_desc *desc =                             \
-						CONTAINER_OF(node, struct i3c_device_desc, node);  \
-					entry->syntax = desc->dev->name;                           \
-					return;                                                    \
-				}                                                                  \
-				cnt++;                                                             \
+                                                                                                   \
+		i3c_bus_for_each_i3cdev(dev, i3c_desc) {                                           \
+			if (cnt == idx) {                                                          \
+				struct i3c_device_desc *desc =                                     \
+					CONTAINER_OF(node, struct i3c_device_desc, node);          \
+				entry->syntax = desc->dev->name;                                   \
+				return;                                                            \
 			}                                                                          \
+			cnt++;                                                                     \
 		}                                                                                  \
 	}
 
@@ -153,18 +150,12 @@ static struct i3c_device_desc *get_i3c_list_desc_from_dev_name(const struct devi
 static struct i3c_device_desc *get_i3c_attached_desc_from_dev_name(const struct device *dev,
 								   const char *tdev_name)
 {
-	struct i3c_driver_data *data;
-	sys_snode_t *node;
+	struct i3c_device_desc *i3c_desc;
 
-	data = (struct i3c_driver_data *)dev->data;
-	if (!sys_slist_is_empty(&data->attached_dev.devices.i3c)) {
-		SYS_SLIST_FOR_EACH_NODE(&data->attached_dev.devices.i3c, node) {
-			struct i3c_device_desc *desc =
-				CONTAINER_OF(node, struct i3c_device_desc, node);
-			/* only look for a device with the same name */
-			if (strcmp(desc->dev->name, tdev_name) == 0) {
-				return desc;
-			}
+	i3c_bus_for_each_i3cdev(dev, i3c_desc) {
+		/* only look for a device with the same name */
+		if (strcmp(desc->dev->name, tdev_name) == 0) {
+			return desc;
 		}
 	}
 
@@ -177,6 +168,8 @@ static int cmd_i3c_info(const struct shell *sh, size_t argc, char **argv)
 	const struct device *dev, *tdev;
 	struct i3c_driver_data *data;
 	sys_snode_t *node;
+	struct i3c_device_desc *desc;
+	struct i3c_i2c_device_desc *i2c_desc
 	bool found = false;
 
 	dev = device_get_binding(argv[ARGV_DEV]);
@@ -195,11 +188,8 @@ static int cmd_i3c_info(const struct shell *sh, size_t argc, char **argv)
 				    argv[ARGV_DEV]);
 			return -ENODEV;
 		}
-
 		if (!sys_slist_is_empty(&data->attached_dev.devices.i3c)) {
-			SYS_SLIST_FOR_EACH_NODE(&data->attached_dev.devices.i3c, node) {
-				struct i3c_device_desc *desc =
-					CONTAINER_OF(node, struct i3c_device_desc, node);
+			i3c_bus_for_each_i3cdev(dev, desc) {
 				/* only look for a device with the same name */
 				if (strcmp(desc->dev->name, tdev->name) == 0) {
 					shell_print(sh,
@@ -247,9 +237,7 @@ static int cmd_i3c_info(const struct shell *sh, size_t argc, char **argv)
 		/* This gets all "currently attached" I3C and I2C devices */
 		if (!sys_slist_is_empty(&data->attached_dev.devices.i3c)) {
 			shell_print(sh, "I3C: Devices found:");
-			SYS_SLIST_FOR_EACH_NODE(&data->attached_dev.devices.i3c, node) {
-				struct i3c_device_desc *desc =
-					CONTAINER_OF(node, struct i3c_device_desc, node);
+			i3c_bus_for_each_i3cdev(dev, desc) {
 				shell_print(sh,
 					    "name: %s\n"
 					    "\tpid: 0x%012llx\n"
@@ -285,13 +273,11 @@ static int cmd_i3c_info(const struct shell *sh, size_t argc, char **argv)
 		}
 		if (!sys_slist_is_empty(&data->attached_dev.devices.i2c)) {
 			shell_print(sh, "I2C: Devices found:");
-			SYS_SLIST_FOR_EACH_NODE(&data->attached_dev.devices.i2c, node) {
-				struct i3c_i2c_device_desc *desc =
-					CONTAINER_OF(node, struct i3c_i2c_device_desc, node);
+			i3c_bus_for_each_i2cdev(dev, i2c_desc) { {
 				shell_print(sh,
 					    "addr: 0x%02x\n"
 					    "\tlvr: 0x%02x",
-					    desc->addr, desc->lvr);
+					    i2c_desc->addr, i2c_desc->lvr);
 			}
 		} else {
 			shell_print(sh, "I2C: No devices found.");
@@ -607,8 +593,7 @@ static int cmd_i3c_hdr_ddr_read(const struct shell *sh, size_t argc, char **argv
 static int cmd_i3c_ccc_rstdaa(const struct shell *sh, size_t argc, char **argv)
 {
 	const struct device *dev;
-	struct i3c_driver_data *data;
-	sys_snode_t *node;
+	struct i3c_device_desc *desc;
 	int ret;
 
 	dev = device_get_binding(argv[ARGV_DEV]);
@@ -626,9 +611,7 @@ static int cmd_i3c_ccc_rstdaa(const struct shell *sh, size_t argc, char **argv)
 
 	/* reset all devices DA */
 	if (!sys_slist_is_empty(&data->attached_dev.devices.i3c)) {
-		SYS_SLIST_FOR_EACH_NODE(&data->attached_dev.devices.i3c, node) {
-			struct i3c_device_desc *desc =
-				CONTAINER_OF(node, struct i3c_device_desc, node);
+		i3c_bus_for_each_i3cdev(dev, desc) {
 			desc->dynamic_addr = 0;
 			shell_print(sh, "Reset dynamic address for device %s",
 				    desc->dev->name);
@@ -656,8 +639,7 @@ static int cmd_i3c_ccc_entdaa(const struct shell *sh, size_t argc, char **argv)
 static int cmd_i3c_ccc_setaasa(const struct shell *sh, size_t argc, char **argv)
 {
 	const struct device *dev;
-	struct i3c_driver_data *data;
-	sys_snode_t *node;
+	struct i3c_device_desc *desc;
 	int ret;
 
 	dev = device_get_binding(argv[ARGV_DEV]);
@@ -665,7 +647,6 @@ static int cmd_i3c_ccc_setaasa(const struct shell *sh, size_t argc, char **argv)
 		shell_error(sh, "I3C: Device driver %s not found.", argv[ARGV_DEV]);
 		return -ENODEV;
 	}
-	data = (struct i3c_driver_data *)dev->data;
 
 	ret = i3c_ccc_do_setaasa_all(dev);
 	if (ret < 0) {
@@ -674,14 +655,10 @@ static int cmd_i3c_ccc_setaasa(const struct shell *sh, size_t argc, char **argv)
 	}
 
 	/* set all devices DA to SA */
-	if (!sys_slist_is_empty(&data->attached_dev.devices.i3c)) {
-		SYS_SLIST_FOR_EACH_NODE(&data->attached_dev.devices.i3c, node) {
-			struct i3c_device_desc *desc =
-				CONTAINER_OF(node, struct i3c_device_desc, node);
-			if ((desc->supports_setaasa) && (desc->dynamic_addr == 0) &&
-			    (desc->static_addr != 0)) {
-				desc->dynamic_addr = desc->static_addr;
-			}
+	i3c_bus_for_each_i3cdev(dev, desc) {
+		if ((desc->supports_setaasa) && (desc->dynamic_addr == 0) &&
+			(desc->static_addr != 0)) {
+			desc->dynamic_addr = desc->static_addr;
 		}
 	}
 
@@ -1057,8 +1034,7 @@ static int cmd_i3c_ccc_setmwl(const struct shell *sh, size_t argc, char **argv)
 static int cmd_i3c_ccc_setmrl_bc(const struct shell *sh, size_t argc, char **argv)
 {
 	const struct device *dev;
-	struct i3c_driver_data *data;
-	sys_snode_t *node;
+	struct i3c_device_desc *desc;
 	struct i3c_ccc_mrl mrl;
 	int ret;
 
@@ -1067,7 +1043,6 @@ static int cmd_i3c_ccc_setmrl_bc(const struct shell *sh, size_t argc, char **arg
 		shell_error(sh, "I3C: Device driver %s not found.", argv[ARGV_DEV]);
 		return -ENODEV;
 	}
-	data = (struct i3c_driver_data *)dev->data;
 
 	mrl.len = strtol(argv[2], NULL, 16);
 	if (argc > 3) {
@@ -1080,14 +1055,10 @@ static int cmd_i3c_ccc_setmrl_bc(const struct shell *sh, size_t argc, char **arg
 		return ret;
 	}
 
-	if (!sys_slist_is_empty(&data->attached_dev.devices.i3c)) {
-		SYS_SLIST_FOR_EACH_NODE(&data->attached_dev.devices.i3c, node) {
-			struct i3c_device_desc *desc =
-				CONTAINER_OF(node, struct i3c_device_desc, node);
-			desc->data_length.mrl = mrl.len;
-			if ((argc > 3) && (desc->bcr & I3C_BCR_IBI_PAYLOAD_HAS_DATA_BYTE)) {
-				desc->data_length.max_ibi = mrl.ibi_len;
-			}
+	i3c_bus_for_each_i3cdev(dev, desc) {
+		desc->data_length.mrl = mrl.len;
+		if ((argc > 3) && (desc->bcr & I3C_BCR_IBI_PAYLOAD_HAS_DATA_BYTE)) {
+			desc->data_length.max_ibi = mrl.ibi_len;
 		}
 	}
 
@@ -1098,8 +1069,7 @@ static int cmd_i3c_ccc_setmrl_bc(const struct shell *sh, size_t argc, char **arg
 static int cmd_i3c_ccc_setmwl_bc(const struct shell *sh, size_t argc, char **argv)
 {
 	const struct device *dev;
-	struct i3c_driver_data *data;
-	sys_snode_t *node;
+	struct i3c_device_desc *desc;
 	struct i3c_ccc_mwl mwl;
 	int ret;
 
@@ -1108,7 +1078,6 @@ static int cmd_i3c_ccc_setmwl_bc(const struct shell *sh, size_t argc, char **arg
 		shell_error(sh, "I3C: Device driver %s not found.", argv[ARGV_DEV]);
 		return -ENODEV;
 	}
-	data = (struct i3c_driver_data *)dev->data;
 
 	mwl.len = strtol(argv[3], NULL, 16);
 
@@ -1119,9 +1088,7 @@ static int cmd_i3c_ccc_setmwl_bc(const struct shell *sh, size_t argc, char **arg
 	}
 
 	if (!sys_slist_is_empty(&data->attached_dev.devices.i3c)) {
-		SYS_SLIST_FOR_EACH_NODE(&data->attached_dev.devices.i3c, node) {
-			struct i3c_device_desc *desc =
-				CONTAINER_OF(node, struct i3c_device_desc, node);
+		i3c_bus_for_each_i3cdev(dev, desc) {
 			desc->data_length.mwl = mwl.len;
 		}
 	}
