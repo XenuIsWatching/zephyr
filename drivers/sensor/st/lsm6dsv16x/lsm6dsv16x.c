@@ -950,6 +950,20 @@ static int lsm6dsv16x_init_chip(const struct device *dev)
 	uint8_t chip_id;
 	uint8_t odr, fs;
 
+#if DT_ANY_INST_ON_BUS_STATUS_OKAY(i3c)
+	if (cfg->i3c.bus != NULL) {
+		/*
+		 * Need to grab the pointer to the I3C device descriptor
+		 * before we can talk to the sensor.
+		 */
+		lsm6dsv16x->i3c_dev = i3c_device_find(cfg->i3c.bus, &cfg->i3c.dev_id);
+		if (lsm6dsv16x->i3c_dev == NULL) {
+			LOG_ERR("Cannot find I3C device descriptor");
+			return -ENODEV;
+		}
+	}
+#endif
+
 	/* All registers except 0x01 are different between banks, including the WHO_AM_I
 	 * register and the register used for a SW reset.  If the lsm6dsv16x wasn't on the user
 	 * bank when it reset, then both the chip id check and the sw reset will fail unless we
@@ -972,13 +986,26 @@ static int lsm6dsv16x_init_chip(const struct device *dev)
 		return -EIO;
 	}
 
-	/* reset device (sw_por) */
-	if (lsm6dsv16x_reset_set(ctx, LSM6DSV16X_GLOBAL_RST) < 0) {
-		return -EIO;
-	}
+	/* Resetting the whole device while using I3C will also reset the DA, therefore perform
+	 * only a software reset if the bus is I3C. It should be assumed that the device was
+	 * already fully reset by the I3C CCC RSTACT (whole chip) done as apart of the I3C Bus
+	 * initialization.
+	 */
+	if (ON_I3C_BUS(cfg)) {
+		/* Restore default configuration */
+		lsm6dsv16x_reset_set(ctx, LSM6DSV16X_RESTORE_CAL_PARAM);
 
-	/* wait 30ms as reported in AN5763 */
-	k_sleep(K_MSEC(30));
+		/* wait 150us as reported in AN5763 */
+		k_sleep(K_USEC(150));
+	} else {
+		/* reset device (sw_por) */
+		if (lsm6dsv16x_reset_set(ctx, LSM6DSV16X_GLOBAL_RST) < 0) {
+			return -EIO;
+		}
+
+		/* wait 30ms as reported in AN5763 */
+		k_sleep(K_MSEC(30));
+	}
 
 	fs = cfg->accel_range;
 	LOG_DBG("accel range is %d", fs);
