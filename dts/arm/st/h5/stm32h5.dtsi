@@ -457,6 +457,32 @@
 			status = "disabled";
 		};
 
+		i3c1: i3c@40005C00 {
+			compatible = "st,stm32-i3c";
+			i3c-scl-hz = <12500000>;
+			i2c-scl-hz = <I2C_BITRATE_STANDARD>;
+			#address-cells = <3>;
+			#size-cells = <0>;
+			reg = <0x40005C00 0x400>;
+			clocks = <&rcc STM32_CLOCK_BUS_APB1 0x00800000>;
+			interrupts = <123 0>, <124 0>;
+			interrupt-names = "event", "error";
+			status = "disabled";
+		};
+
+		i3c2: i3c@44003000 {
+			compatible = "st,stm32-i3c";
+			i3c-scl-hz = <12500000>;
+			i2c-scl-hz = <I2C_BITRATE_STANDARD>;
+			#address-cells = <3>;
+			#size-cells = <0>;
+			reg = <0x44003000 0x400>;
+			clocks = <&rcc STM32_CLOCK_BUS_APB3 0x00000200>;
+			interrupts = <131 0>, <132 0>;
+			interrupt-names = "event", "error";
+			status = "disabled";
+		};
+
 		spi1: spi@40013000 {
 			compatible = "st,stm32h7-spi", "st,stm32-spi-fifo", "st,stm32-spi";
 			#address-cells = <1>;

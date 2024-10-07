@@ -1,0 +1,18 @@
+# Copyright (c) 2024 Meta Platforms, Inc. and its affiliates.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+module = I3C_STM32
+module-str = i3c-stm32
+source "subsys/logging/Kconfig.template.log_config"
+
+config I3C_STM32
+	bool "STM32 I3C driver"
+	select I3C_IBI_WORKQUEUE if I3C_USE_IBI
+	depends on DT_HAS_ST_STM32_I3C_ENABLED
+	select USE_STM32_LL_I3C
+	select USE_STM32_LL_RCC
+	select PINCTRL
+	default y
+	help
+	  Enable STM32 I3C driver.
