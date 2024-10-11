@@ -59,11 +59,7 @@ struct lsm6dsv16x_config {
 #endif
 	} stmemsc_cfg;
 	uint8_t accel_pm;
-	uint8_t accel_odr;
-	uint8_t accel_range;
 	uint8_t gyro_pm;
-	uint8_t gyro_odr;
-	uint8_t gyro_range;
 	uint8_t drdy_pulsed;
 #ifdef CONFIG_LSM6DSV16X_TRIGGER
 	const struct gpio_dt_spec int1_gpio;
@@ -89,12 +85,30 @@ union samples {
 
 #define LSM6DSV16X_SHUB_MAX_NUM_TARGETS			3
 
+struct lsm6dsv16x_settings {
+	bool fifo_en;
+	bool interrupt1_drdy;
+	bool interrupt1_fifo_ths;
+	bool interrupt1_fifo_full;
+	bool interrupt2_drdy;
+	bool interrupt2_fifo_ths;
+	bool interrupt2_fifo_full;
+
+	uint8_t gyro_odr;
+	uint8_t gyro_range;
+
+	uint8_t accel_odr;
+	uint8_t accel_range;
+};
+
 struct lsm6dsv16x_data {
 	const struct device *dev;
+	struct lsm6dsv16x_settings settings;
 	int16_t acc[3];
 	uint32_t acc_gain;
 	int16_t gyro[3];
 	uint32_t gyro_gain;
+
 #if defined(CONFIG_LSM6DSV16X_ENABLE_TEMP)
 	int16_t temp_sample;
 #endif
@@ -136,6 +150,14 @@ struct lsm6dsv16x_data {
 #elif defined(CONFIG_LSM6DSV16X_TRIGGER_GLOBAL_THREAD)
 	struct k_work work;
 #endif
+#ifdef CONFIG_LSM6DSV16X_STREAM
+	struct rtio_iodev_sqe *streaming_sqe;
+	struct rtio *r;
+	struct rtio_iodev *i3c_iodev;
+	lsm6dsv16x_fifo_status_t fifo_status;
+	uint64_t timestamp;
+	atomic_t reading_fifo;
+#endif /* CONFIG_LSM6DSV16X_STREAM */
 #endif /* CONFIG_LSM6DSV16X_TRIGGER */
 
 #if DT_ANY_INST_ON_BUS_STATUS_OKAY(i3c)

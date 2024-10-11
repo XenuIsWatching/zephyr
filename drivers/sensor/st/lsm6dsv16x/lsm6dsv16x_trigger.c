@@ -112,6 +112,84 @@ static int lsm6dsv16x_enable_g_int(const struct device *dev, int enable)
 }
 
 /**
+ * lsm6dsv16x_enable_fifo_th_int - FIFO threshold selected int pin to generate interrupt
+ */
+static int lsm6dsv16x_enable_fifo_th_int(const struct device *dev, int enable)
+{
+	const struct lsm6dsv16x_config *cfg = dev->config;
+	stmdev_ctx_t *ctx = (stmdev_ctx_t *)&cfg->ctx;
+	int ret;
+
+	/* set interrupt */
+	if ((cfg->drdy_pin == 1) || ON_I3C_BUS(cfg)) {
+		lsm6dsv16x_pin_int_route_t val;
+
+		ret = lsm6dsv16x_pin_int1_route_get(ctx, &val);
+		if (ret < 0) {
+			LOG_ERR("pint_int1_route_get error");
+			return ret;
+		}
+
+		val.fifo_th = 1;
+
+		ret = lsm6dsv16x_pin_int1_route_set(ctx, &val);
+	} else {
+		lsm6dsv16x_pin_int_route_t val;
+
+		ret = lsm6dsv16x_pin_int2_route_get(ctx, &val);
+		if (ret < 0) {
+			LOG_ERR("pint_int2_route_get error");
+			return ret;
+		}
+
+		val.fifo_th = 1;
+
+		ret = lsm6dsv16x_pin_int2_route_set(ctx, &val);
+	}
+
+	return ret;
+}
+
+/**
+ * lsm6dsv16x_enable_fifo_full_int - FIFO full selected int pin to generate interrupt
+ */
+static int lsm6dsv16x_enable_fifo_full_int(const struct device *dev, int enable)
+{
+	const struct lsm6dsv16x_config *cfg = dev->config;
+	stmdev_ctx_t *ctx = (stmdev_ctx_t *)&cfg->ctx;
+	int ret;
+
+	/* set interrupt */
+	if ((cfg->drdy_pin == 1) || ON_I3C_BUS(cfg)) {
+		lsm6dsv16x_pin_int_route_t val;
+
+		ret = lsm6dsv16x_pin_int1_route_get(ctx, &val);
+		if (ret < 0) {
+			LOG_ERR("pint_int1_route_get error");
+			return ret;
+		}
+
+		val.fifo_full = 1;
+
+		ret = lsm6dsv16x_pin_int1_route_set(ctx, &val);
+	} else {
+		lsm6dsv16x_pin_int_route_t val;
+
+		ret = lsm6dsv16x_pin_int2_route_get(ctx, &val);
+		if (ret < 0) {
+			LOG_ERR("pint_int2_route_get error");
+			return ret;
+		}
+
+		val.fifo_full = 1;
+
+		ret = lsm6dsv16x_pin_int2_route_set(ctx, &val);
+	}
+
+	return ret;
+}
+
+/**
  * lsm6dsv16x_trigger_set - link external trigger to event data ready
  */
 int lsm6dsv16x_trigger_set(const struct device *dev,
@@ -126,22 +204,32 @@ int lsm6dsv16x_trigger_set(const struct device *dev,
 		return -ENOTSUP;
 	}
 
-	if (trig->chan == SENSOR_CHAN_ACCEL_XYZ) {
-		lsm6dsv16x->handler_drdy_acc = handler;
-		lsm6dsv16x->trig_drdy_acc = trig;
-		if (handler) {
-			return lsm6dsv16x_enable_xl_int(dev, LSM6DSV16X_EN_BIT);
-		} else {
-			return lsm6dsv16x_enable_xl_int(dev, LSM6DSV16X_DIS_BIT);
+	switch (trig->type) {
+	case SENSOR_TRIG_DATA_READY:
+		if (trig->chan == SENSOR_CHAN_ACCEL_XYZ) {
+			lsm6dsv16x->handler_drdy_acc = handler;
+			lsm6dsv16x->trig_drdy_acc = trig;
+			if (handler) {
+				return lsm6dsv16x_enable_xl_int(dev, LSM6DSV16X_EN_BIT);
+			} else {
+				return lsm6dsv16x_enable_xl_int(dev, LSM6DSV16X_DIS_BIT);
+			}
+		} else if (trig->chan == SENSOR_CHAN_GYRO_XYZ) {
+			lsm6dsv16x->handler_drdy_gyr = handler;
+			lsm6dsv16x->trig_drdy_gyr = trig;
+			if (handler) {
+				return lsm6dsv16x_enable_g_int(dev, LSM6DSV16X_EN_BIT);
+			} else {
+				return lsm6dsv16x_enable_g_int(dev, LSM6DSV16X_DIS_BIT);
+			}
 		}
-	} else if (trig->chan == SENSOR_CHAN_GYRO_XYZ) {
-		lsm6dsv16x->handler_drdy_gyr = handler;
-		lsm6dsv16x->trig_drdy_gyr = trig;
-		if (handler) {
-			return lsm6dsv16x_enable_g_int(dev, LSM6DSV16X_EN_BIT);
-		} else {
-			return lsm6dsv16x_enable_g_int(dev, LSM6DSV16X_DIS_BIT);
-		}
+		break;
+	case SENSOR_TRIG_FIFO_WATERMARK:
+		return lsm6dsv16x_enable_fifo_th_int(dev, LSM6DSV16X_EN_BIT);
+	case SENSOR_TRIG_FIFO_FULL:
+		return lsm6dsv16x_enable_fifo_full_int(dev, LSM6DSV16X_EN_BIT);
+	default:
+		break;
 	}
 
 	return -ENOTSUP;
