@@ -1038,6 +1038,21 @@ static int lsm6dsv16x_init_chip(const struct device *dev)
 		return -EIO;
 	}
 
+	if (IS_ENABLED(CONFIG_LSM6DSV16X_STREAM) && (ON_I3C_BUS(cfg))) {
+		/*
+		 * Set MRL to the Max Size of the FIFO so the entire FIFO can be read
+		 * out at once
+		 */
+		struct i3c_ccc_mrl setmrl = {
+			.len = 0x0700,
+			.ibi_len = lsm6dsv16x->i3c_dev->data_length.max_ibi,
+		};
+		if (i3c_ccc_do_setmrl(lsm6dsv16x->i3c_dev, &setmrl) < 0) {
+			LOG_ERR("failed to set mrl");
+			return -EIO;
+		}
+	}
+
 	if (lsm6dsv16x_block_data_update_set(ctx, 1) < 0) {
 		LOG_DBG("failed to set BDU mode");
 		return -EIO;
@@ -1106,7 +1121,9 @@ static int lsm6dsv16x_init(const struct device *dev)
 	.int1_gpio = GPIO_DT_SPEC_INST_GET_OR(inst, int1_gpios, { 0 }),	\
 	.int2_gpio = GPIO_DT_SPEC_INST_GET_OR(inst, int2_gpios, { 0 }),	\
 	.drdy_pulsed = DT_INST_PROP(inst, drdy_pulsed),                 \
-	.drdy_pin = DT_INST_PROP(inst, drdy_pin)
+	.drdy_pin = DT_INST_PROP(inst, drdy_pin),                       \
+	.int_en_i3c = DT_INST_PROP(inst, int_en_i3c),                   \
+	.bus_act_sel = DT_INST_ENUM_IDX(inst, bus_act_sel_us),
 #else
 #define LSM6DSV16X_CFG_IRQ(inst)
 #endif /* CONFIG_LSM6DSV16X_TRIGGER */
@@ -1191,14 +1208,51 @@ static int lsm6dsv16x_init(const struct device *dev)
 		LSM6DSV16X_CONFIG_I2C(inst);				\
 
 /*
+ * Instantiation macros used when a device is on an I3C bus.
+ */
+
+#define LSM6DSV16X_I3C_RTIO_DEFINE(inst)                                       \
+	I3C_DT_IODEV_DEFINE(lsm6dsv16x_i3c_iodev_##inst, DT_DRV_INST(inst));   \
+	RTIO_DEFINE(lsm6dsv16x_rtio_ctx_##inst, 4, 4);
+
+#define LSM6DSV16X_CONFIG_I3C(inst)					\
+	{								\
+		STMEMSC_CTX_I3C(&lsm6dsv16x_config_##inst.stmemsc_cfg),	\
+		.stmemsc_cfg = {					\
+			.i3c = &lsm6dsv16x_data_##inst.i3c_dev,		\
+		},							\
+		.i3c.bus = DEVICE_DT_GET(DT_INST_BUS(inst)),		\
+		.i3c.dev_id = I3C_DEVICE_ID_DT_INST(inst),		\
+		LSM6DSV16X_CONFIG_COMMON(inst)				\
+	}
+
+#define LSM6DSV16X_DEFINE_I3C(inst)					\
+	IF_ENABLED(CONFIG_LSM6DSV16X_STREAM, (LSM6DSV16X_I3C_RTIO_DEFINE(inst))); \
+	static struct lsm6dsv16x_data lsm6dsv16x_data_##inst = {	\
+		IF_ENABLED(CONFIG_LSM6DSV16X_STREAM,			\
+			(.rtio_ctx = &lsm6dsv16x_rtio_ctx_##inst,	\
+			 .iodev = &lsm6dsv16x_i3c_iodev_##inst,		\
+			 .bus_type = BUS_I3C,))				\
+	};								\
+	static const struct lsm6dsv16x_config lsm6dsv16x_config_##inst = \
+		LSM6DSV16X_CONFIG_I3C(inst);				\
+
+#define LSM6DSV16X_DEFINE_I3C_OR_I2C(inst)				\
+	COND_CODE_0(DT_INST_PROP_BY_IDX(inst, reg, 1),			\
+		    (LSM6DSV16X_DEFINE_I2C(inst)),			\
+		    (LSM6DSV16X_DEFINE_I3C(inst)))
+
+/*
  * Main instantiation macro. Use of COND_CODE_1() selects the right
  * bus-specific macro at preprocessor time.
  */
 
-#define LSM6DSV16X_DEFINE(inst)						\
-		COND_CODE_1(DT_INST_ON_BUS(inst, spi),			\
-			(LSM6DSV16X_DEFINE_SPI(inst)),			\
-			(LSM6DSV16X_DEFINE_I2C(inst)));			\
-		LSM6DSV16X_DEVICE_INIT(inst)
+#define LSM6DSV16X_DEFINE(inst)							\
+	COND_CODE_1(DT_INST_ON_BUS(inst, spi),					\
+		(LSM6DSV16X_DEFINE_SPI(inst)),					\
+		(COND_CODE_1(DT_INST_ON_BUS(inst, i3c),				\
+			(LSM6DSV16X_DEFINE_I3C_OR_I2C(inst)),			\
+			(LSM6DSV16X_DEFINE_I2C(inst)))));			\
+	LSM6DSV16X_DEVICE_INIT(inst)
 
 DT_INST_FOREACH_STATUS_OKAY(LSM6DSV16X_DEFINE)
