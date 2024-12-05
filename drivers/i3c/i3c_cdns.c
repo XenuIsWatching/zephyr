@@ -3577,6 +3577,8 @@ static struct i3c_driver_api api = {
 
 	.i3c_xfers = cdns_i3c_transfer,
 
+	.controllership_request_all = cdns_i3c_cr,
+
 	.target_tx_write = cdns_i3c_target_tx_write,
 	.target_register = cdns_i3c_target_register,
 	.target_unregister = cdns_i3c_target_unregister,
