@@ -711,6 +711,34 @@ __subsystem struct i3c_driver_api {
 			       bool ack);
 
 	/**
+	 * ACK or NACK Controllership Requests from all targets.
+	 *
+	 * Controller only API.
+	 *
+	 * @param dev Pointer to controller device driver instance.
+	 * @param accept True to ACK, False to NACK
+	 *
+	 * @return See i3c_controllership_request_all()
+	 */
+	int (*controllership_request_all)(const struct device *dev,
+					  bool accept);
+
+	/**
+	 * ACK or NACK Controllership Requests from a specific target.
+	 *
+	 * Controller only API.
+	 *
+	 * @param dev Pointer to controller device driver instance.
+	 * @param target Pointer to target device descriptor.
+	 * @param accept True to ACK, False to NACK
+	 *
+	 * @return See i3c_controllership_request()
+	 */
+	int (*controllership_request)(const struct device *dev,
+				      struct i3c_device_desc *target,
+				      bool accept);
+
+	/**
 	 * Raise In-Band Interrupt (IBI).
 	 *
 	 * Target device only API.
@@ -1659,6 +1687,52 @@ struct i3c_device_desc *i3c_device_find(const struct device *dev,
 	}
 
 	return api->i3c_device_find(dev, id);
+}
+
+/**
+ * ACK or NACK Controllership Requests from all targets.
+ *
+ * Controller only API.
+ *
+ * @param dev Pointer to controller device driver instance.
+ * @param accept True to ACK, False to NACK
+ *
+ * @return See i3c_controllership_request_all()
+ */
+static inline int i3c_controllership_request_all(const struct device *dev,
+						 bool accept)
+{
+	const struct i3c_driver_api *api =
+		(const struct i3c_driver_api *)dev->api;
+
+	if (api->controllership_request_all == NULL) {
+		return -ENOSYS;
+	}
+
+	return api->controllership_request_all(dev, accept);
+}
+
+/**
+ * ACK or NACK Controllership Requests from all targets.
+ *
+ * Controller only API.
+ *
+ * @param dev Pointer to controller device driver instance.
+ * @param accept True to ACK, False to NACK
+ *
+ * @return See i3c_controllership_request_all()
+ */
+static inline int i3c_controllership_request(struct i3c_device_desc *target,
+					 bool accept)
+{
+	const struct i3c_driver_api *api =
+		(const struct i3c_driver_api *)dev->api;
+
+	if (api->controllership_request == NULL) {
+		return -ENOSYS;
+	}
+
+	return api->controllership_request(target->bus, target, accept);
 }
 
 /**

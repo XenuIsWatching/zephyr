@@ -1046,6 +1046,48 @@ static int cdns_i3c_ibi_hj_response(const struct device *dev, bool ack)
 	return 0;
 }
 
+static int cdns_i3c_ccr(const struct device *dev, struct i3c_device_desc *target)
+{
+	uint32_t sir_map;
+	uint32_t sir_cfg;
+	const struct cdns_i3c_config *config = dev->config;
+	struct cdns_i3c_i2c_dev_data *cdns_i3c_device_data = target->controller_priv;
+	struct i3c_ccc_events i3c_events;
+	int ret = 0;
+
+	/* Check if the device can issue CRR */
+	if (!i3c_device_is_controller_capable(target)) {
+		ret = -EINVAL;
+		return ret;
+	}
+
+	sir_cfg = SIR_MAP_DEV_ROLE(I3C_BCR_DEVICE_ROLE(target->bcr)) |
+		  SIR_MAP_DEV_DA(target->dynamic_addr) |
+		  SIR_MAP_DEV_PL(target->data_length.max_ibi);
+	/* ACK if there is an ibi tir cb or if it is controller capable */
+	sir_cfg |= SIR_MAP_DEV_ACK;
+
+	LOG_DBG("%s: IBI CCR enabling for 0x%02x (BCR 0x%02x)", dev->name, target->dynamic_addr,
+		target->bcr);
+
+	/* Tell target to enable CRs */
+	i3c_events.events = I3C_CCC_EVT_CR;
+	ret = i3c_ccc_do_events_set(target, true, &i3c_events);
+	if (ret != 0) {
+		LOG_ERR("%s: Error sending IBI ENEC for 0x%02x (%d)", dev->name,
+			target->dynamic_addr, ret);
+		return ret;
+	}
+
+	sir_map = sys_read32(config->base + SIR_MAP_DEV_REG(cdns_i3c_device_data->id - 1));
+	sir_map &= ~SIR_MAP_DEV_CONF_MASK(cdns_i3c_device_data->id - 1);
+	sir_map |= SIR_MAP_DEV_CONF(cdns_i3c_device_data->id - 1, sir_cfg);
+
+	sys_write32(sir_map, config->base + SIR_MAP_DEV_REG(cdns_i3c_device_data->id - 1));
+
+	return ret;
+}
+
 static int cdns_i3c_controller_ibi_enable(const struct device *dev, struct i3c_device_desc *target)
 {
 	uint32_t sir_map;
@@ -1055,19 +1097,18 @@ static int cdns_i3c_controller_ibi_enable(const struct device *dev, struct i3c_d
 	struct i3c_ccc_events i3c_events;
 	int ret = 0;
 
-	/* Check if the device can issue IBI TIRs or CR */
-	if (!i3c_device_is_ibi_capable(target) && !i3c_device_is_controller_capable(target)) {
+	/* Check if the device can issue IBI TIRs */
+	if (!i3c_device_is_ibi_capable(target)) {
 		ret = -EINVAL;
 		return ret;
 	}
 
-	/* TODO: check for duplicate in SIR */
-
-	sir_cfg = SIR_MAP_DEV_ROLE(I3C_BCR_DEVICE_ROLE(target->bcr)) |
+	/* Leave SIR_MAP_DEV_ROLE as is */
+	sir_cfg = SIR_MAP_DEV_ROLE(0) |
 		  SIR_MAP_DEV_DA(target->dynamic_addr) |
 		  SIR_MAP_DEV_PL(target->data_length.max_ibi);
 	/* ACK if there is an ibi tir cb or if it is controller capable*/
-	if ((target->ibi_cb != NULL) || i3c_device_is_controller_capable(target)) {
+	if (target->ibi_cb != NULL) {
 		sir_cfg |= SIR_MAP_DEV_ACK;
 	}
 	if (target->bcr & I3C_BCR_MAX_DATA_SPEED_LIMIT) {
@@ -1078,7 +1119,7 @@ static int cdns_i3c_controller_ibi_enable(const struct device *dev, struct i3c_d
 		target->bcr);
 
 	/* Tell target to enable IBI TIRs and CRs */
-	i3c_events.events = I3C_CCC_EVT_INTR | I3C_CCC_EVT_CR;
+	i3c_events.events = I3C_CCC_EVT_INTR;
 	ret = i3c_ccc_do_events_set(target, true, &i3c_events);
 	if (ret != 0) {
 		LOG_ERR("%s: Error sending IBI ENEC for 0x%02x (%d)", dev->name,
@@ -3637,6 +3678,9 @@ static DEVICE_API(i3c, api) = {
 	.ibi_enable = cdns_i3c_controller_ibi_enable,
 	.ibi_disable = cdns_i3c_controller_ibi_disable,
 	.ibi_raise = cdns_i3c_target_ibi_raise,
+
+	.controllership_request_all = cdns_i3c_ccr_all,
+	.controllership_request = cdns_i3c_ccr,
 #endif
 
 #ifdef CONFIG_I3C_RTIO
