@@ -486,8 +486,6 @@
 #define I3C_CMDD_THR 1
 /* in-band-interrupt response queue threshold */
 #define I3C_IBIR_THR 1
-/* tx data threshold - unused */
-#define I3C_TX_THR   1
 
 #define LOG_MODULE_NAME I3C_CADENCE
 LOG_MODULE_REGISTER(I3C_CADENCE, CONFIG_I3C_CADENCE_LOG_LEVEL);
@@ -530,8 +528,10 @@ struct cdns_i3c_i2c_dev_data {
 struct cdns_i3c_cmd {
 	uint32_t cmd0;
 	uint32_t cmd1;
-	uint32_t ddr_header;
-	uint32_t ddr_crc;
+	uint32_t ddr_header_word;
+	uint32_t ddr_crc_word;
+	uint8_t running_ddr_rx_crc;
+	/* If this is a DDR message, this will be in Words, else in Bytes */
 	uint32_t len;
 	uint32_t *num_xfer;
 	void *buf;
@@ -544,8 +544,14 @@ struct cdns_i3c_cmd {
 struct cdns_i3c_xfer {
 	struct k_sem complete;
 	int ret;
-	int num_cmds;
+	uint8_t num_cmds;
 	struct cdns_i3c_cmd cmds[I3C_MAX_MSGS];
+	/* current indexes within the messages */
+	uint8_t rx_cmd_idx;
+	uint8_t tx_cmd_idx;
+	/* If this is a DDR message, these will be in Words, else in Bytes */
+	uint32_t rx_buf_idx;
+	uint32_t tx_buf_idx;
 };
 
 #ifdef CONFIG_I3C_USE_IBI
@@ -567,6 +573,10 @@ struct cdns_i3c_config {
 	void (*irq_config_func)(const struct device *dev);
 	/** IBID Threshold value */
 	uint8_t ibid_thr;
+	/** TX Threshold value */
+	uint16_t tx_thr;
+	/** RX Threshold value */
+	uint16_t rx_thr;
 };
 
 /* Driver instance data */
@@ -764,22 +774,33 @@ static inline void cdns_i3c_interrupts_clear(const struct cdns_i3c_config *confi
 }
 
 /* FIFO mgmt */
-static void cdns_i3c_write_tx_fifo(const struct cdns_i3c_config *config, const void *buf,
-				   uint32_t len)
+/* Returns the total number of bytes that were written to the FIFO */
+static int cdns_i3c_write_tx_fifo(const struct cdns_i3c_config *config, const void *buf,
+				  uint32_t len)
 {
 	const uint32_t *ptr = buf;
 	uint32_t remain, val;
 
 	for (remain = len; remain >= 4; remain -= 4) {
+		if (cdns_i3c_tx_fifo_full(config)) {
+			return len - remain;
+		}
 		val = *ptr++;
 		sys_write32(val, config->base + TX_FIFO);
 	}
 
+	/* last write to the fifo */
 	if (remain > 0) {
+		if (cdns_i3c_tx_fifo_full(config)) {
+			return len - remain;
+		}
 		val = 0;
 		memcpy(&val, ptr, remain);
 		sys_write32(val, config->base + TX_FIFO);
 	}
+
+	/* whole buffer has been written */
+	return len;
 }
 
 #ifdef CONFIG_I3C_TARGET
@@ -867,7 +888,7 @@ static int cdns_i3c_read_rx_fifo(const struct cdns_i3c_config *config, void *buf
 
 	for (remain = len; remain >= 4; remain -= 4) {
 		if (cdns_i3c_rx_fifo_empty(config)) {
-			return -EIO;
+			return len - remain;
 		}
 		val = sys_le32_to_cpu(sys_read32(config->base + RX_FIFO));
 		*ptr++ = val;
@@ -875,52 +896,49 @@ static int cdns_i3c_read_rx_fifo(const struct cdns_i3c_config *config, void *buf
 
 	if (remain > 0) {
 		if (cdns_i3c_rx_fifo_empty(config)) {
-			return -EIO;
+			return len - remain;
 		}
 		val = sys_le32_to_cpu(sys_read32(config->base + RX_FIFO));
 		memcpy(ptr, &val, remain);
 	}
 
-	return 0;
+	return len;
 }
 
+/* Return the number of words read, len is in number of DDR words (not bytes!!) */
 static int cdns_i3c_read_rx_fifo_ddr_xfer(const struct cdns_i3c_config *config, void *buf,
-					  uint32_t len, uint32_t ddr_header)
+					  uint32_t len, uint8_t *crc5)
 {
 	uint16_t *ptr = buf;
 	uint32_t val;
 	uint32_t preamble;
-	uint8_t crc5 = 0x1F;
+	uint32_t remain;
 
-	/*
-	 * TODO: This function does not support threshold interrupts, it is expected that the
-	 * whole packet to be within the FIFO and not split across multiple calls to this function.
-	 */
-	crc5 = i3c_cdns_crc5(crc5, (uint16_t)DDR_DATA(ddr_header));
-
-	for (int i = 0; i < len; i++) {
+	for (remain = len; remain > 0; remain--) {
 		if (cdns_i3c_rx_fifo_empty(config)) {
-			return -EIO;
+			break;
 		}
+		/* Read the 20b DDR Word */
 		val = sys_read32(config->base + RX_FIFO);
 		preamble = (val & DDR_PREAMBLE_MASK);
 
 		if (preamble == DDR_PREAMBLE_DATA_ABORT ||
 		    preamble == DDR_PREAMBLE_DATA_ABORT_ALT) {
 			*ptr++ = sys_cpu_to_be16((uint16_t)DDR_DATA(val));
-			crc5 = i3c_cdns_crc5(crc5, (uint16_t)DDR_DATA(val));
+			*crc5 = i3c_cdns_crc5(*crc5, (uint16_t)DDR_DATA(val));
 		} else if ((preamble == DDR_PREAMBLE_CMD_CRC) &&
 			   ((val & DDR_CRC_TOKEN_MASK) == DDR_CRC_TOKEN)) {
+			/* Validate received CRC from target */
 			uint8_t crc = (uint8_t)DDR_CRC(val);
 
-			if (crc5 != crc) {
+			if (*crc5 != crc) {
 				LOG_ERR("DDR RX crc error");
 				return -EIO;
 			}
 		}
 	}
 
-	return 0;
+	return len - remain;
 }
 
 static inline int cdns_i3c_wait_for_idle(const struct device *dev)
@@ -1361,6 +1379,158 @@ static void cdns_i3c_cancel_transfer(const struct device *dev)
 	sys_write32(CTRL_DEV_EN | sys_read32(config->base + CTRL), config->base + CTRL);
 }
 
+/* Advance rx_cmd_idx past the current cmd to the next RX command and reset rx_buf_idx */
+static void cdns_i3c_xfer_advance_rx_cmd(struct cdns_i3c_xfer *xfer)
+{
+	xfer->rx_cmd_idx++;
+	while (xfer->rx_cmd_idx < xfer->num_cmds) {
+		struct cdns_i3c_cmd *cmd = &xfer->cmds[xfer->rx_cmd_idx];
+
+		if ((cmd->hdr == I3C_DATA_RATE_SDR && (cmd->cmd0 & CMD0_FIFO_RNW)) ||
+		    (cmd->hdr == I3C_DATA_RATE_HDR_DDR &&
+		     (DDR_DATA(cmd->ddr_header_word) & HDR_CMD_RD))) {
+			break;
+		}
+		xfer->rx_cmd_idx++;
+	}
+	xfer->rx_buf_idx = 0;
+}
+
+/* Advance tx_cmd_idx past the current cmd to the next TX command and reset tx_buf_idx */
+static void cdns_i3c_xfer_advance_tx_cmd(struct cdns_i3c_xfer *xfer)
+{
+	xfer->tx_cmd_idx++;
+	while (xfer->tx_cmd_idx < xfer->num_cmds) {
+		struct cdns_i3c_cmd *cmd = &xfer->cmds[xfer->tx_cmd_idx];
+
+		if (cmd->hdr == I3C_DATA_RATE_SDR && !(cmd->cmd0 & CMD0_FIFO_RNW)) {
+			break;
+		}
+		if (cmd->hdr == I3C_DATA_RATE_HDR_DDR &&
+		    !(DDR_DATA(cmd->ddr_header_word) & HDR_CMD_RD)) {
+			break;
+		}
+		xfer->tx_cmd_idx++;
+	}
+	xfer->tx_buf_idx = 0;
+}
+
+/* Drain RX FIFO into current cmd buffer, advancing to next RX cmd when full */
+static void cdns_i3c_rx_thr_sdr(const struct device *dev)
+{
+	const struct cdns_i3c_config *config = dev->config;
+	struct cdns_i3c_data *data = dev->data;
+	struct cdns_i3c_xfer *xfer = &data->xfer;
+
+	while (xfer->rx_cmd_idx < xfer->num_cmds && !cdns_i3c_rx_fifo_empty(config)) {
+		struct cdns_i3c_cmd *cmd = &xfer->cmds[xfer->rx_cmd_idx];
+		uint32_t remaining = cmd->len - xfer->rx_buf_idx;
+
+		xfer->rx_buf_idx += cdns_i3c_read_rx_fifo(
+			config, &((uint8_t *)cmd->buf)[xfer->rx_buf_idx], remaining);
+
+		if (xfer->rx_buf_idx == cmd->len && xfer->rx_cmd_idx < xfer->num_cmds) {
+			cdns_i3c_xfer_advance_rx_cmd(xfer);
+		}
+	}
+}
+
+/* Drain RX FIFO for DDR transfer, advancing to next RX cmd when full */
+static void cdns_i3c_rx_thr_ddr(const struct device *dev)
+{
+	const struct cdns_i3c_config *config = dev->config;
+	struct cdns_i3c_data *data = dev->data;
+	struct cdns_i3c_xfer *xfer = &data->xfer;
+
+	while (xfer->rx_cmd_idx < xfer->num_cmds && !cdns_i3c_rx_fifo_empty(config)) {
+		struct cdns_i3c_cmd *cmd = &xfer->cmds[xfer->rx_cmd_idx];
+		/* subtract 1 from len for the header word */
+		uint32_t remaining = cmd->len - 1 - xfer->rx_buf_idx;
+
+		uint32_t words_read = cdns_i3c_read_rx_fifo_ddr_xfer(
+			config, &((uint8_t *)cmd->buf)[xfer->rx_buf_idx], remaining,
+			&cmd->running_ddr_rx_crc);
+		if (words_read > 0) {
+			xfer->rx_buf_idx += words_read;
+		}
+
+		/* Check if we've received the full payload (len - 1 excludes header) */
+		if (xfer->rx_buf_idx == cmd->len - 1 && xfer->rx_cmd_idx < xfer->num_cmds) {
+			cdns_i3c_xfer_advance_rx_cmd(xfer);
+		}
+	}
+}
+
+/* Fill TX FIFO from current SDR cmd buffer, advancing to next TX cmd when drained */
+static void cdns_i3c_tx_thr_sdr(const struct device *dev)
+{
+	const struct cdns_i3c_config *config = dev->config;
+	struct cdns_i3c_data *data = dev->data;
+	struct cdns_i3c_xfer *xfer = &data->xfer;
+
+	while (xfer->tx_cmd_idx < xfer->num_cmds &&
+	       xfer->tx_buf_idx != xfer->cmds[xfer->tx_cmd_idx].len &&
+	       !cdns_i3c_tx_fifo_full(config)) {
+		struct cdns_i3c_cmd *cmd = &xfer->cmds[xfer->tx_cmd_idx];
+		uint32_t remaining = cmd->len - xfer->tx_buf_idx;
+
+		xfer->tx_buf_idx += cdns_i3c_write_tx_fifo(
+			config, &((uint8_t *)cmd->buf)[xfer->tx_buf_idx], remaining);
+
+		if (xfer->tx_buf_idx == cmd->len && xfer->tx_cmd_idx < xfer->num_cmds) {
+			cdns_i3c_xfer_advance_tx_cmd(xfer);
+		}
+	}
+}
+
+/* Fill TX FIFO from current DDR cmd buffer (header + payload + CRC) */
+static void cdns_i3c_tx_thr_ddr(const struct device *dev)
+{
+	const struct cdns_i3c_config *config = dev->config;
+	struct cdns_i3c_data *data = dev->data;
+	struct cdns_i3c_xfer *xfer = &data->xfer;
+
+	while (xfer->tx_cmd_idx < xfer->num_cmds &&
+	       ((xfer->tx_buf_idx != xfer->cmds[xfer->tx_cmd_idx].len + 1) ||
+		(xfer->tx_buf_idx == 0)) &&
+	       !cdns_i3c_tx_fifo_full(config)) {
+		struct cdns_i3c_cmd *cmd = &xfer->cmds[xfer->tx_cmd_idx];
+		uint32_t words_written;
+
+		if (xfer->tx_buf_idx == 0) {
+			/* First word is always the DDR header */
+			words_written = cdns_i3c_write_tx_fifo(
+				config, &cmd->ddr_header_word, DDR_CRC_AND_HEADER_SIZE);
+			xfer->tx_buf_idx += words_written / 4;
+		}
+
+		if (xfer->tx_buf_idx == 1 &&
+		    (DDR_DATA(cmd->ddr_header_word) & HDR_CMD_RD)) {
+			/* Read cmd: only the header word is needed, advance */
+			cdns_i3c_xfer_advance_tx_cmd(xfer);
+		} else if (xfer->tx_buf_idx == cmd->len - 1) {
+			/* Last word: write the CRC */
+			words_written = cdns_i3c_write_tx_fifo(
+				config, &cmd->ddr_crc_word, DDR_CRC_AND_HEADER_SIZE);
+			xfer->tx_buf_idx += words_written / 4;
+		} else if (xfer->tx_buf_idx < cmd->len - 1) {
+			/* Payload: send 16-bit DDR data words */
+			uint16_t ddr_data_payload = sys_get_be16(
+				&((uint8_t *)cmd->buf)[(xfer->tx_buf_idx - 1) * 2]);
+			uint32_t ddr_message =
+				((xfer->tx_buf_idx == 1) ? DDR_PREAMBLE_DATA_ABORT
+							 : DDR_PREAMBLE_DATA_ABORT_ALT) |
+				prepare_ddr_word(ddr_data_payload);
+			words_written = cdns_i3c_write_tx_fifo(
+				config, &ddr_message, DDR_CRC_AND_HEADER_SIZE);
+			xfer->tx_buf_idx += words_written / 4;
+		} else {
+			/* Past CRC: advance to next DDR TX command */
+			cdns_i3c_xfer_advance_tx_cmd(xfer);
+		}
+	}
+}
+
 /**
  * @brief Start a I3C/I2C Transfer
  *
@@ -1387,41 +1557,46 @@ static void cdns_i3c_start_transfer(const struct device *dev)
 		(void)sys_read32(config->base + CMDR);
 	}
 
-	/* Write all tx data to fifo */
+	/* Set up RX state and find first TX command */
+	bool rx_cmd_first = false;
+	bool tx_cmd_first = false;
+
 	for (unsigned int i = 0; i < xfer->num_cmds; i++) {
-		if (xfer->cmds[i].hdr == I3C_DATA_RATE_SDR) {
-			if (!(xfer->cmds[i].cmd0 & CMD0_FIFO_RNW)) {
-				cdns_i3c_write_tx_fifo(config, xfer->cmds[i].buf,
-						       xfer->cmds[i].len);
-			}
-		} else if (xfer->cmds[i].hdr == I3C_DATA_RATE_HDR_DDR) {
-			/* DDR Xfer requires sending header block*/
-			cdns_i3c_write_tx_fifo(config, &xfer->cmds[i].ddr_header,
-					       DDR_CRC_AND_HEADER_SIZE);
-			/* If not read operation need to send data + crc of data*/
-			if (!(DDR_DATA(xfer->cmds[i].ddr_header) & HDR_CMD_RD)) {
-				uint8_t *buf = (uint8_t *)xfer->cmds[i].buf;
-				uint32_t ddr_message = 0;
-				uint16_t ddr_data_payload = sys_get_be16(&buf[0]);
-				/* HDR-DDR Data Words */
-				ddr_message = (DDR_PREAMBLE_DATA_ABORT |
-					       prepare_ddr_word(ddr_data_payload));
-				cdns_i3c_write_tx_fifo(config, &ddr_message,
-						       DDR_CRC_AND_HEADER_SIZE);
-				for (int j = 2; j < ((xfer->cmds[i].len - 2) * 2); j += 2) {
-					ddr_data_payload = sys_get_be16(&buf[j]);
-					ddr_message = (DDR_PREAMBLE_DATA_ABORT_ALT |
-						       prepare_ddr_word(ddr_data_payload));
-					cdns_i3c_write_tx_fifo(config, &ddr_message,
-							       DDR_CRC_AND_HEADER_SIZE);
-				}
-				/* HDR-DDR CRC Word */
-				cdns_i3c_write_tx_fifo(config, &xfer->cmds[i].ddr_crc,
-						       DDR_CRC_AND_HEADER_SIZE);
-			}
-		} else {
+		if (xfer->cmds[i].hdr != I3C_DATA_RATE_SDR &&
+		    xfer->cmds[i].hdr != I3C_DATA_RATE_HDR_DDR) {
 			xfer->ret = -ENOTSUP;
 			return;
+		}
+
+		bool is_rx = (xfer->cmds[i].hdr == I3C_DATA_RATE_SDR &&
+			      (xfer->cmds[i].cmd0 & CMD0_FIFO_RNW)) ||
+			     (xfer->cmds[i].hdr == I3C_DATA_RATE_HDR_DDR &&
+			      (DDR_DATA(xfer->cmds[i].ddr_header_word) & HDR_CMD_RD));
+
+		if (is_rx) {
+			if (!rx_cmd_first) {
+				rx_cmd_first = true;
+				xfer->rx_cmd_idx = i;
+				xfer->rx_buf_idx = 0;
+			}
+			if (xfer->cmds[i].hdr == I3C_DATA_RATE_HDR_DDR) {
+				/* initial seed for ddr crc5 is 0x1F */
+				xfer->cmds[i].running_ddr_rx_crc = i3c_cdns_crc5(
+					0x1F, (uint16_t)DDR_DATA(xfer->cmds[i].ddr_header_word));
+			}
+		} else if (!tx_cmd_first) {
+			tx_cmd_first = true;
+			xfer->tx_cmd_idx = i;
+			xfer->tx_buf_idx = 0;
+		}
+	}
+
+	/* Initial fill of the TX FIFO — threshold interrupts continue if it fills up */
+	if (tx_cmd_first) {
+		if (xfer->cmds[xfer->tx_cmd_idx].hdr == I3C_DATA_RATE_HDR_DDR) {
+			cdns_i3c_tx_thr_ddr(dev);
+		} else {
+			cdns_i3c_tx_thr_sdr(dev);
 		}
 	}
 
@@ -1434,7 +1609,7 @@ static void cdns_i3c_start_transfer(const struct device *dev)
 
 		if (xfer->cmds[i].hdr == I3C_DATA_RATE_HDR_DDR) {
 			sys_write32(0x00, config->base + CMD1_FIFO);
-			if ((DDR_DATA(xfer->cmds[i].ddr_header) & HDR_CMD_RD)) {
+			if ((DDR_DATA(xfer->cmds[i].ddr_header_word) & HDR_CMD_RD)) {
 				sys_write32(CMD0_FIFO_IS_DDR | CMD0_FIFO_PL_LEN(1),
 					    config->base + CMD0_FIFO);
 			} else {
@@ -1910,9 +2085,9 @@ static void cdns_i3c_complete_transfer(const struct device *dev)
 		}
 
 		if ((cmd->hdr == I3C_DATA_RATE_HDR_DDR) &&
-		    (DDR_DATA(cmd->ddr_header) & HDR_CMD_RD)) {
+		    (DDR_DATA(cmd->ddr_header_word) & HDR_CMD_RD)) {
 			ret = cdns_i3c_read_rx_fifo_ddr_xfer(config, cmd->buf, xfer,
-							     cmd->ddr_header);
+							     &cmd->running_ddr_rx_crc);
 		}
 
 		/* Record error */
@@ -1925,6 +2100,7 @@ static void cdns_i3c_complete_transfer(const struct device *dev)
 			if (data->xfer.cmds[i].sdr_err) {
 				*data->xfer.cmds[i].sdr_err = I3C_ERROR_CE_NONE;
 			}
+			ret = 0;
 			break;
 
 		case CMDR_MST_ABORT:
@@ -1946,6 +2122,7 @@ static void cdns_i3c_complete_transfer(const struct device *dev)
 				LOG_DBG("%s: Controller Abort due to buffer length exceeded with "
 					"no EoD from target",
 					dev->name);
+				ret = 0;
 			}
 			if (data->xfer.cmds[i].sdr_err) {
 				*data->xfer.cmds[i].sdr_err = I3C_ERROR_CE_NONE;
@@ -2365,34 +2542,13 @@ static int cdns_i3c_transfer(const struct device *dev, struct i3c_device_desc *t
 {
 	const struct cdns_i3c_config *config = dev->config;
 	struct cdns_i3c_data *data = dev->data;
-	int txsize = 0;
-	int rxsize = 0;
 	int ret;
 
 	__ASSERT_NO_MSG(num_msgs > 0);
 
-	if (num_msgs > data->hw_cfg.cmd_mem_depth || num_msgs > data->hw_cfg.cmdr_mem_depth) {
-		LOG_ERR("%s: Too many messages", dev->name);
-		return -ENOMEM;
-	}
-
-	/*
-	 * Ensure data will fit within FIFOs.
-	 *
-	 * TODO: This limitation prevents burst transfers greater than the
-	 *       FIFO sizes and should be replaced with an implementation that
-	 *       utilizes the RX/TX data interrupts.
-	 */
-	for (int i = 0; i < num_msgs; i++) {
-		if ((msgs[i].flags & I3C_MSG_RW_MASK) == I3C_MSG_READ) {
-			rxsize += ROUND_UP(msgs[i].len, 4);
-		} else {
-			txsize += ROUND_UP(msgs[i].len, 4);
-		}
-	}
-	if ((rxsize > data->hw_cfg.rx_mem_depth) || (txsize > data->hw_cfg.tx_mem_depth)) {
-		LOG_ERR("%s: Total RX and/or TX transfer larger than FIFO", dev->name);
-		return -ENOMEM;
+	/* make sure we are currently the active controller */
+	if (!(sys_read32(config->base + MST_STATUS0) & MST_STATUS0_MASTER_MODE)) {
+		return -EACCES;
 	}
 
 	k_mutex_lock(&data->bus_lock, K_FOREVER);
@@ -2421,6 +2577,7 @@ static int cdns_i3c_transfer(const struct device *dev, struct i3c_device_desc *t
 	for (int i = 0; i < num_msgs; i++) {
 		struct cdns_i3c_cmd *cmd = &data->xfer.cmds[i];
 		uint32_t pl = msgs[i].len;
+
 		/* check hdr mode */
 		if ((!(msgs[i].flags & I3C_MSG_HDR)) ||
 		    ((msgs[i].flags & I3C_MSG_HDR) && (msgs[i].hdr_mode == 0))) {
@@ -2434,10 +2591,6 @@ static int cdns_i3c_transfer(const struct device *dev, struct i3c_device_desc *t
 			if ((msgs[i].flags & I3C_MSG_RW_MASK) == I3C_MSG_READ) {
 				cmd->cmd0 |= CMD0_FIFO_RNW;
 			}
-			/*
-			 * For I3C_XMIT_MODE_NO_ADDR reads in SDN mode,
-			 * CMD0_FIFO_PL_LEN specifies the abort limit not bytes to read
-			 */
 			cmd->cmd0 |= CMD0_FIFO_PL_LEN(pl);
 
 			/* Send broadcast header on first transfer or after a STOP. */
@@ -2483,7 +2636,7 @@ static int cdns_i3c_transfer(const struct device *dev, struct i3c_device_desc *t
 				ddr_header_payload =
 					prepare_ddr_cmd_parity_adjustment_bit(ddr_header_payload);
 				/* HDR-DDR Command Word */
-				cmd->ddr_header =
+				cmd->ddr_header_word =
 					DDR_PREAMBLE_CMD_CRC | prepare_ddr_word(ddr_header_payload);
 			} else {
 				uint8_t crc5 = 0x1F;
@@ -2491,7 +2644,7 @@ static int cdns_i3c_transfer(const struct device *dev, struct i3c_device_desc *t
 				ddr_header_payload = HDR_CMD_CODE(msgs[i].hdr_cmd_code) |
 						     (target->dynamic_addr << 1);
 				/* HDR-DDR Command Word */
-				cmd->ddr_header =
+				cmd->ddr_header_word =
 					DDR_PREAMBLE_CMD_CRC | prepare_ddr_word(ddr_header_payload);
 				/* calculate crc5 */
 				crc5 = i3c_cdns_crc5(crc5, ddr_header_payload);
@@ -2500,8 +2653,8 @@ static int cdns_i3c_transfer(const struct device *dev, struct i3c_device_desc *t
 						crc5,
 						sys_get_be16((void *)((uintptr_t)cmd->buf + j)));
 				}
-				cmd->ddr_crc = DDR_PREAMBLE_CMD_CRC | DDR_CRC_TOKEN | (crc5 << 9) |
-					       DDR_CRC_WR_SETUP;
+				cmd->ddr_crc_word = DDR_PREAMBLE_CMD_CRC | DDR_CRC_TOKEN |
+						    (crc5 << 9) | DDR_CRC_WR_SETUP;
 			}
 			/* Length of DDR Transfer is length of payload (in 16b) + header and CRC
 			 * blocks
@@ -2776,9 +2929,7 @@ static void cdns_i3c_target_sdr_tx_thr_int_handler(const struct device *dev,
 static void cdns_i3c_irq_handler(const struct device *dev)
 {
 	const struct cdns_i3c_config *config = dev->config;
-#if defined(CONFIG_I3C_CONTROLLER) && defined(CONFIG_I3C_USE_IBI) || defined(CONFIG_I3C_TARGET)
 	struct cdns_i3c_data *data = dev->data;
-#endif
 #ifdef CONFIG_I3C_CONTROLLER
 	uint32_t int_st = sys_read32(config->base + MST_ISR);
 
@@ -2831,6 +2982,26 @@ static void cdns_i3c_irq_handler(const struct device *dev)
 	/* In-band interrupt data */
 	if (int_st & MST_INT_RX_UNF) {
 		LOG_ERR("%s: controller rx buffer underflow,", dev->name);
+	}
+
+	/* RX threshold interrupt */
+	if ((int_st & MST_INT_RX_THR) &&
+	    data->xfer.rx_cmd_idx < data->xfer.num_cmds) {
+		if (data->xfer.cmds[data->xfer.rx_cmd_idx].hdr == I3C_DATA_RATE_HDR_DDR) {
+			cdns_i3c_rx_thr_ddr(dev);
+		} else {
+			cdns_i3c_rx_thr_sdr(dev);
+		}
+	}
+
+	/* TX threshold interrupt */
+	if ((int_st & MST_INT_TX_THR) &&
+	    data->xfer.tx_cmd_idx < data->xfer.num_cmds) {
+		if (data->xfer.cmds[data->xfer.tx_cmd_idx].hdr == I3C_DATA_RATE_HDR_DDR) {
+			cdns_i3c_tx_thr_ddr(dev);
+		} else {
+			cdns_i3c_tx_thr_sdr(dev);
+		}
 	}
 #ifdef CONFIG_I3C_TARGET
 	if (int_st & MST_INT_MR_DONE) {
@@ -2915,9 +3086,6 @@ static void cdns_i3c_irq_handler(const struct device *dev)
 		LOG_ERR("%s: slave sdr tx buffer overflow,", dev->name);
 	}
 
-	if (int_sl & SLV_INT_DDR_RX_THR) {
-	}
-
 	/* SLV DDR WR COMPLETE */
 	if (int_sl & SLV_INT_DDR_WR_COMP) {
 		/* initial value of CRC5 for HDR-DDR is 0x1F */
@@ -2966,7 +3134,7 @@ static void cdns_i3c_irq_handler(const struct device *dev)
 		}
 	}
 
-	/* SLV SDR rx complete */
+	/* SLV DDR rx complete */
 	if (int_sl & SLV_INT_DDR_RD_COMP) {
 		/* a read needs to be done on slv_status 0 else a NACK will happen */
 		(void)sys_read32(config->base + SLV_STATUS0);
@@ -2974,6 +3142,9 @@ static void cdns_i3c_irq_handler(const struct device *dev)
 		if (target_cb != NULL && target_cb->stop_cb) {
 			target_cb->stop_cb(data->target_config);
 		}
+	}
+
+	if (int_sl & SLV_INT_DDR_RX_THR) {
 	}
 
 	/* SLV DDR TX THR */
@@ -3661,17 +3832,14 @@ static int cdns_i3c_bus_init(const struct device *dev)
 	/* enable Core */
 	sys_write32(CTRL_DEV_EN | ctrl, config->base + CTRL);
 
-	/* Set fifo thresholds. */
+	/* Set cmd fifo thresholds. */
 	sys_write32(CMD_THR(I3C_CMDD_THR) | IBI_THR(config->ibid_thr) | CMDR_THR(I3C_CMDR_THR) |
 			    IBIR_THR(I3C_IBIR_THR),
 		    config->base + CMD_IBI_THR_CTRL);
 
 	/* Set TX/RX interrupt thresholds. */
-	if (sys_read32(config->base + MST_STATUS0) & MST_STATUS0_MASTER_MODE) {
-		sys_write32(TX_THR(I3C_TX_THR) | RX_THR(data->hw_cfg.rx_mem_depth),
-			    config->base + TX_RX_THR_CTRL);
-	} else {
-		sys_write32(TX_THR(1) | RX_THR(1), config->base + TX_RX_THR_CTRL);
+	sys_write32(TX_THR(config->tx_thr) | RX_THR(config->rx_thr), config->base + TX_RX_THR_CTRL);
+	if (!(sys_read32(config->base + MST_STATUS0) & MST_STATUS0_MASTER_MODE)) {
 		sys_write32(SLV_DDR_TX_THR(0) | SLV_DDR_RX_THR(1),
 			    config->base + SLV_DDR_TX_RX_THR_CTRL);
 	}
@@ -3687,7 +3855,8 @@ static int cdns_i3c_bus_init(const struct device *dev)
 #ifdef CONFIG_I3C_CONTROLLER
 	/* Enable controller interrupts. */
 	sys_write32(MST_INT_IBIR_THR | MST_INT_RX_UNF | MST_INT_HALTED | MST_INT_MR_DONE |
-			    MST_INT_TX_OVF | MST_INT_IBIR_OVF | MST_INT_IBID_THR,
+			    MST_INT_TX_OVF | MST_INT_IBIR_OVF | MST_INT_IBID_THR |
+			    MST_INT_TX_THR | MST_INT_RX_THR,
 		    config->base + MST_IER);
 
 	int ret = i3c_addr_slots_init(dev);
@@ -3775,6 +3944,8 @@ static DEVICE_API(i3c, api) = {
 		.input_frequency = DT_INST_PROP(n, input_clock_frequency),                         \
 		.irq_config_func = cdns_i3c_config_func_##n,                                       \
 		.ibid_thr = DT_INST_PROP(n, ibid_thr),                                             \
+		.tx_thr = DT_INST_PROP(n, tx_thr),                                                 \
+		.rx_thr = DT_INST_PROP(n, rx_thr),                                                 \
 		IF_ENABLED(CONFIG_I3C_CONTROLLER,                                                  \
 			(.common.dev_list.i3c = cdns_i3c_device_array_##n,                         \
 			.common.dev_list.num_i3c = ARRAY_SIZE(cdns_i3c_device_array_##n),          \
