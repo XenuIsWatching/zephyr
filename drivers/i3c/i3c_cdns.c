@@ -3584,7 +3584,7 @@ static int cdns_i3c_bus_init(const struct device *dev)
 			    MST_INT_TX_OVF | MST_INT_IBIR_OVF | MST_INT_IBID_THR,
 		    config->base + MST_IER);
 
-	int ret = i3c_addr_slots_init(dev);
+	int ret = i3c_addr_slots_root_init(dev);
 
 	if (ret != 0) {
 		return ret;

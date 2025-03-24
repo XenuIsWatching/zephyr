@@ -946,6 +946,11 @@ struct i3c_device_desc {
 	 */
 	uint8_t dynamic_addr;
 
+	/**
+	 * This is used to define where it lives on the address tree map
+	 */
+	struct i3c_addr_tree_location *tree_location;
+
 #if defined(CONFIG_I3C_USE_GROUP_ADDR) || defined(__DOXYGEN__)
 	/**
 	 * Group address for this target device. Set during:
@@ -1138,7 +1143,7 @@ struct i3c_dev_attached_list {
 	 * - Quick way to find out if a target address is
 	 *   a I3C or I2C device.
 	 */
-	struct i3c_addr_slots addr_slots;
+	struct i3c_addr_tree addr_slots_tree;
 
 	struct {
 		/**

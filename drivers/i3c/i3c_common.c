@@ -78,7 +78,43 @@ enum i3c_addr_slot_status i3c_addr_slots_status(struct i3c_addr_slots *slots, ui
 	return status;
 }
 
-int i3c_addr_slots_init(const struct device *dev)
+static void i3c_merge_addr_slots(struct i3c_addr_slots *slots, struct i3c_addr_slots *src)
+{
+	int i;
+
+	__ASSERT_NO_MSG(slots != NULL);
+	__ASSERT_NO_MSG(src != NULL);
+
+	for (i = 0; i < ARRAY_SIZE(slots->slots); i++) {
+		slots->slots[i] |= src->slots[i];
+	}
+}
+
+void i3c_get_unique_address_slot(struct i3c_addr_slots *addr_slot, struct i3c_addr_tree* tree)
+{
+	int n;
+
+	i3c_merge_addr_slots(addr_slot, &tree->slots);
+	for (n = 0; n < tree->num_of_bridges; n++) {
+		i3c_get_unique_address_slot(addr_slot, tree->routes[n]);
+	}
+}
+
+void i3c_get_addr_slots(struct i3c_addr_slots *addr_slot, struct i3c_addr_tree* tree, struct i3c_addr_tree_location* loc)
+{
+	int n;
+
+	i3c_merge_addr_slots(addr_slot, &tree->slots);
+	if (loc->bridge_route == 0) {
+		for (n = 0; n < tree->num_of_bridges; n++) {
+			i3c_get_unique_address_slot(addr_slot, tree->routes[n]);
+		}
+	} else {
+		i3c_get_addr_slots(addr_slot, tree->routes[loc->bridge_route], loc->direction);
+	}
+}
+
+int i3c_addr_slots_root_init(const struct device *dev)
 {
 	struct i3c_driver_data *data = (struct i3c_driver_data *)dev->data;
 	const struct i3c_driver_config *config = (const struct i3c_driver_config *)dev->config;
@@ -88,25 +124,25 @@ int i3c_addr_slots_init(const struct device *dev)
 
 	__ASSERT_NO_MSG(dev != NULL);
 
-	(void)memset(&data->attached_dev.addr_slots, 0, sizeof(data->attached_dev.addr_slots));
+	(void)memset(&data->attached_dev.addr_slots_tree.slots, 0, sizeof(data->attached_dev.addr_slots_tree.slots));
 	sys_slist_init(&data->attached_dev.devices.i3c);
 	sys_slist_init(&data->attached_dev.devices.i2c);
 
 	/* Address restrictions (ref 5.1.2.2.5, Specification for I3C v1.1.1) */
 	for (i = 0; i <= 7; i++) {
 		/* Addresses 0 to 7 are reserved */
-		i3c_addr_slots_set(&data->attached_dev.addr_slots, i, I3C_ADDR_SLOT_STATUS_RSVD);
+		i3c_addr_slots_set(&data->attached_dev.addr_slots_tree.slots, i, I3C_ADDR_SLOT_STATUS_RSVD);
 
 		/*
 		 * Addresses within a single bit error of broadcast address
 		 * are also reserved.
 		 */
-		i3c_addr_slots_set(&data->attached_dev.addr_slots, I3C_BROADCAST_ADDR ^ BIT(i),
+		i3c_addr_slots_set(&data->attached_dev.addr_slots_tree.slots, I3C_BROADCAST_ADDR ^ BIT(i),
 				   I3C_ADDR_SLOT_STATUS_RSVD);
 	}
 
 	/* The broadcast address is reserved */
-	i3c_addr_slots_set(&data->attached_dev.addr_slots, I3C_BROADCAST_ADDR,
+	i3c_addr_slots_set(&data->attached_dev.addr_slots_tree.slots, I3C_BROADCAST_ADDR,
 			   I3C_ADDR_SLOT_STATUS_RSVD);
 
 	/*
@@ -141,25 +177,33 @@ out:
 	return ret;
 }
 
-bool i3c_addr_slots_is_free(struct i3c_addr_slots *slots, uint8_t dev_addr)
+bool i3c_addr_slots_is_free(struct i3c_addr_tree *tree, struct i3c_addr_tree_location* loc, uint8_t dev_addr)
 {
 	enum i3c_addr_slot_status status;
+	struct i3c_addr_slots slots;
 
-	__ASSERT_NO_MSG(slots != NULL);
+	__ASSERT_NO_MSG(tree != NULL);
 
-	status = i3c_addr_slots_status(slots, dev_addr);
+	(void)memset(&slots, 0, sizeof(slots));
+	i3c_get_addr_slots(&slots, tree, loc);
+
+	status = i3c_addr_slots_status(&slots, dev_addr);
 
 	return (status == I3C_ADDR_SLOT_STATUS_FREE);
 }
 
-uint8_t i3c_addr_slots_next_free_find(struct i3c_addr_slots *slots, uint8_t start_addr)
+uint8_t i3c_addr_slots_next_free_find(struct i3c_addr_tree *tree, struct i3c_addr_tree_location* loc, uint8_t start_addr)
 {
 	uint8_t addr;
 	enum i3c_addr_slot_status status;
+	struct i3c_addr_slots slots;
+
+	(void)memset(&slots, 0, sizeof(slots));
+	i3c_get_addr_slots(&slots, tree, loc);
 
 	/* Addresses 0 to 7 are reserved. So start at 8. */
 	for (addr = MAX(start_addr, 8); addr < I3C_MAX_ADDR; addr++) {
-		status = i3c_addr_slots_status(slots, addr);
+		status = i3c_addr_slots_status(&slots, addr);
 		if (status == I3C_ADDR_SLOT_STATUS_FREE) {
 			return addr;
 		}

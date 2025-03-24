@@ -1954,7 +1954,7 @@ static int mcux_i3c_init(const struct device *dev)
 	i3c_master_config_t ctrl_config_hal;
 	int ret = 0;
 
-	ret = i3c_addr_slots_init(dev);
+	ret = i3c_addr_slots_root_init(dev);
 	if (ret != 0) {
 		goto err_out;
 	}

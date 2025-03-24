@@ -55,7 +55,7 @@ initialization function:
    * The :c:struct:`i3c_addr_slots` and :c:struct:`i3c_dev_list` are
      structures to aid in address assignments and device list management.
      If this is being used, this struct needs to be initialized by calling
-     :c:func:`i3c_addr_slots_init`. These two structures can also be used
+     :c:func:`i3c_addr_slots_root_init`. These two structures can also be used
      with various helper functions.
 
    * Initialize the device descriptors if needed by the controller

@@ -1542,7 +1542,7 @@ static int i3c_stm32_init(const struct device *dev)
 #ifdef CONFIG_I3C_USE_IBI
 	k_sem_init(&data->ibi_lock_sem, 1, 1);
 #endif
-	ret = i3c_addr_slots_init(dev);
+	ret = i3c_addr_slots_root_init(dev);
 	if (ret != 0) {
 		LOG_ERR("Addr slots init fail, err=%d", ret);
 		return ret;

@@ -2300,7 +2300,7 @@ static int dw_i3c_init(const struct device *dev)
 	sys_write32(sys_read32(config->regs + DEVICE_CTRL) | (DEV_CTRL_HOT_JOIN_NACK),
 		    config->regs + DEVICE_CTRL);
 
-	ret = i3c_addr_slots_init(dev);
+	ret = i3c_addr_slots_root_init(dev);
 	if (ret != 0) {
 		return ret;
 	}

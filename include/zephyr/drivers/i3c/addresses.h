@@ -61,6 +61,25 @@ struct i3c_addr_slots {
 };
 
 /**
+ * @brief Used for navigating the tree of devices on the I3C bus.
+ */
+struct i3c_addr_tree_location {
+	/* if 0, then this is where this device lives in the address tree, otherwise continue walking */
+	int bridge_route;
+	struct i3c_addr_tree_location *route;
+};
+
+/**
+ * @brief Used for defining the addresses on the tree
+ */
+struct i3c_addr_tree {
+	struct i3c_addr_tree *parent;
+	struct i3c_addr_slots slots;
+	int num_of_bridges;
+	struct i3c_addr_tree **routes;
+};
+
+/**
  * @brief Initialize the I3C address slots struct.
  *
  * This clears out the assigned address bits, and set the reserved
@@ -71,7 +90,7 @@ struct i3c_addr_slots {
  * @retval 0 if successful.
  * @retval -EINVAL if duplicate addresses.
  */
-int i3c_addr_slots_init(const struct device *dev);
+int i3c_addr_slots_root_init(const struct device *dev);
 
 /**
  * @brief Set the address status of a device.

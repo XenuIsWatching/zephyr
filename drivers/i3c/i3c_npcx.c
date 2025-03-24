@@ -2921,7 +2921,7 @@ static int npcx_i3c_init(const struct device *dev)
 	k_sem_init(&data->target_lock_sem, 1, 1);
 	k_sem_init(&data->target_event_lock_sem, 1, 1);
 
-	ret = i3c_addr_slots_init(dev);
+	ret = i3c_addr_slots_root_init(dev);
 	if (ret != 0) {
 		LOG_ERR("Addr slots init fail %d", ret);
 		return ret;
