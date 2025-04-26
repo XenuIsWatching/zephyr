@@ -719,6 +719,11 @@ static DEVICE_API(counter, counter_stm32_driver_api) = {
 	.capture_disable = counter_stm32_capture_disable,
 	.capture_callback_set = counter_stm32_capture_callback_set,
 #endif
+#ifdef CONFIG_COUNTER_TRIGGER
+	.trigger_set_output = counter_stm32_trigger_set_output,
+	.trigger_enable = counter_stm32_trigger_enable,
+	.trigger_disable = counter_stm32_trigger_disable,
+#endif
 };
 
 #define TIM_IRQ_HANDLE_CC(timx, cc)						\

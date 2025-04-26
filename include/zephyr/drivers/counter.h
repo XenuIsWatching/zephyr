@@ -141,6 +141,35 @@ extern "C" {
 				      uint32_t flags, uint64_t ticks,
 				      void *user_data);
 
+/**
+ * @anchor COUNTER_TRIGGER_FLAGS
+ * @name Counter trigger flags
+ *
+ * @brief Used by @ref  and
+ *	  @ref .
+ * @{ */
+
+/**
+ * @brief Trigger one-shot pulse
+ */
+ #define COUNTER_TRIGGER_ONE_SHOT BIT(0)
+
+/**
+ * @brief Set Active Low Polarity
+ */
+ #define COUNTER_TRIGGER_ACTIVE_LOW BIT(1)
+
+ /**@} */
+
+/** @brief Counter trigger output configuration structure
+ */
+struct counter_trigger_config {
+	/**
+	 * Flags (see @ref COUNTER_TRIGGER_FLAGS).
+	 */
+	uint32_t flags;
+};
+
 /** @brief Alarm callback
  *
  * @param dev       Pointer to the device structure for the driver instance.
@@ -274,6 +303,13 @@ typedef int (*counter_api_capture_enable)(const struct device *dev,
 					  uint8_t chan);
 typedef int (*counter_api_capture_disable)(const struct device *dev,
 					   uint8_t chan);
+typedef int (*counter_api_trigger_set_output)(const struct device *dev,
+					      uint8_t chan,
+					      const struct counter_trigger_config *cfg);
+typedef int (*counter_api_trigger_enable)(const struct device *dev,
+				      	  uint8_t chan);
+typedef int (*counter_api_trigger_disable)(const struct device *dev,
+				       	   uint8_t chan);
 
 __subsystem struct counter_driver_api {
 	counter_api_start start;
@@ -296,6 +332,11 @@ __subsystem struct counter_driver_api {
 	counter_api_capture_callback_set capture_callback_set;
 	counter_api_capture_enable capture_enable;
 	counter_api_capture_disable capture_disable;
+#endif
+#ifdef CONFIG_COUNTER_TRIGGER
+	counter_api_trigger_set_output trigger_set_output;
+	counter_api_trigger_enable trigger_enable;
+	counter_api_trigger_disable trigger_disable;
 #endif
 };
 
@@ -456,6 +497,75 @@ static inline int z_impl_counter_capture_disable(const struct device *dev,
 }
 #endif
 
+#ifdef CONFIG_COUNTER_TRIGGER
+__syscall int counter_trigger_set_output(const struct device *dev,
+					  uint8_t chan,
+					  const struct counter_trigger_config *cfg);
+
+static inline int z_impl_counter_trigger_set_output(const struct device *dev,
+						    uint8_t chan,
+						    const struct counter_trigger_config *cfg)
+{
+	const struct counter_driver_api *api =
+				(struct counter_driver_api *)dev->api;
+
+	if (!api->trigger_set_output) {
+		return -ENOTSUP;
+	}
+
+	return api->trigger_set_output(dev, chan, cfg);
+}
+
+__syscall int counter_trigger_enable(const struct device *dev,
+				     uint8_t chan);
+
+/**
+ * @brief Enable trigger on a channel.
+ *
+ * @param dev  Pointer to the device structure for the driver instance.
+ * @param chan Channel ID.
+ *
+ * @retval 0 If successful.
+ * @retval Negative error code on failure
+ */
+static inline int z_impl_counter_trigger_enable(const struct device *dev,
+						uint8_t chan)
+{
+	const struct counter_driver_api *api =
+				(struct counter_driver_api *)dev->api;
+
+	if (!api->trigger_enable) {
+		return -ENOTSUP;
+	}
+
+	return api->trigger_enable(dev, chan);
+}
+
+/**
+ * @brief Disable trigger on a channel.
+ *
+ * @param dev  Pointer to the device structure for the driver instance.
+ * @param chan Channel ID.
+ *
+ * @retval 0 If successful.
+ * @retval Negative error code on failure
+ */
+__syscall int counter_trigger_disable(const struct device *dev,
+				      uint8_t chan);
+
+static inline int z_impl_counter_trigger_disable(const struct device *dev,
+						 uint8_t chan)
+{
+	const struct counter_driver_api *api =
+				(struct counter_driver_api *)dev->api;
+
+	if (!api->trigger_disable) {
+		return -ENOTSUP;
+	}
+
+	return api->trigger_disable(dev, chan);
+}
+#endif
 
 /**
  * @brief Function to convert microseconds to ticks.

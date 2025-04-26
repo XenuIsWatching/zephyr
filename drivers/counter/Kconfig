@@ -18,6 +18,14 @@ config COUNTER_CAPTURE
 	  interrupt on the event. This feature is not supported by all
 	  counter drivers.
 
+config COUNTER_TRIGGER
+	bool "Enable counter trigger support"
+	help
+	  Enable support for counter trigger. This is a feature that allows
+	  hardware triggering with respect to a counter as well as a software
+	  interrupt on the event. This feature is not supported by all
+	  counter drivers.
+
 config COUNTER_INIT_PRIORITY
 	int "Counter init priority"
 	default 60
