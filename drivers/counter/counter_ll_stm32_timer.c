@@ -135,11 +135,11 @@ static int counter_stm32_stop(const struct device *dev)
 	return 0;
 }
 
-static uint32_t counter_stm32_get_top_value(const struct device *dev)
+static counter_ticks_t counter_stm32_get_top_value(const struct device *dev)
 {
 	const struct counter_stm32_config *config = dev->config;
 
-	return LL_TIM_GetAutoReload(config->timer);
+	return (counter_ticks_t)LL_TIM_GetAutoReload(config->timer);
 }
 
 static uint32_t counter_stm32_read(const struct device *dev)
@@ -149,9 +149,9 @@ static uint32_t counter_stm32_read(const struct device *dev)
 	return LL_TIM_GetCounter(config->timer);
 }
 
-static int counter_stm32_get_value(const struct device *dev, uint32_t *ticks)
+static int counter_stm32_get_value(const struct device *dev, counter_ticks_t *ticks)
 {
-	*ticks = counter_stm32_read(dev);
+	*ticks = (counter_ticks_t)counter_stm32_read(dev);
 	return 0;
 }
 
@@ -558,12 +558,12 @@ static int counter_stm32_reset_timer(const struct device *dev)
 	return 0;
 }
 
-static int counter_stm32_set_value(const struct device *dev, uint32_t ticks)
+static int counter_stm32_set_value(const struct device *dev, counter_ticks_t ticks)
 {
 	const struct counter_stm32_config *config = dev->config;
 	TIM_TypeDef *timer = config->timer;
 
-	LL_TIM_SetCounter(timer, ticks);
+	LL_TIM_SetCounter(timer, (uint32_t)ticks);
 
 	return 0;
 }
