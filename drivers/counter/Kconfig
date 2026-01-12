@@ -30,7 +30,7 @@ config COUNTER_64BITS_FREQ
 	  4,294,967,295 Hz.
 
 config COUNTER_64BITS_TICKS
-	bool
+	bool "Counter 64-bits ticks"
 	help
 	  Select this option if the counter driver should use 64-bits for ticks.
 	  This is typically set by drivers that require extended
