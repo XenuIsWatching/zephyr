@@ -271,7 +271,7 @@ static void lsm6dsv16x_handle_interrupt(const struct device *dev)
 		}
 	}
 
-	if (!ON_I3C_BUS(cfg) || (I3C_INT_PIN(cfg))) {
+	if (LSM6DSV16X_USING_GPIO_TRIGGER(dev)) {
 		ret = gpio_pin_interrupt_configure_dt(lsm6dsv16x->drdy_gpio,
 						GPIO_INT_EDGE_TO_ACTIVE);
 		if (ret < 0) {
@@ -309,6 +309,46 @@ static void lsm6dsv16x_gpio_callback(const struct device *dev,
 
 	lsm6dsv16x_intr_callback(lsm6dsv16x);
 }
+
+#ifdef CONFIG_COUNTER_CAPTURE
+static void lsm6dsv16x_counter_capture_callback(const struct device *dev, uint8_t chan,
+						counter_capture_flags_t flags,
+						uint32_t ticks, void *user_data)
+{
+	struct lsm6dsv16x_data *lsm6dsv16x = user_data;
+
+	ARG_UNUSED(chan);
+	ARG_UNUSED(flags);
+
+#ifdef CONFIG_LSM6DSV16X_STREAM
+	lsm6dsv16x->timestamp = counter_ticks_to_ns(dev, ticks);
+#else
+	ARG_UNUSED(ticks);
+#endif
+
+	lsm6dsv16x_intr_callback(lsm6dsv16x);
+}
+
+#ifdef CONFIG_COUNTER_64BITS_TICKS
+static void lsm6dsv16x_counter_capture_callback_64(const struct device *dev, uint8_t chan,
+						   counter_capture_flags_t flags,
+						   uint64_t ticks, void *user_data)
+{
+	struct lsm6dsv16x_data *lsm6dsv16x = user_data;
+
+	ARG_UNUSED(chan);
+	ARG_UNUSED(flags);
+
+#ifdef CONFIG_LSM6DSV16X_STREAM
+	lsm6dsv16x->timestamp = counter_ticks_to_ns_64(dev, ticks);
+#else
+	ARG_UNUSED(ticks);
+#endif
+
+	lsm6dsv16x_intr_callback(lsm6dsv16x);
+}
+#endif /* CONFIG_COUNTER_64BITS_TICKS */
+#endif /* CONFIG_COUNTER_CAPTURE */
 
 #ifdef CONFIG_LSM6DSV16X_TRIGGER_OWN_THREAD
 static void lsm6dsv16x_thread(void *p1, void *p2, void *p3)
@@ -381,15 +421,28 @@ int lsm6dsv16x_init_interrupt(const struct device *dev)
 	struct lsm6dsv16x_data *lsm6dsv16x = dev->data;
 	const struct lsm6dsv16x_config *cfg = dev->config;
 	stmdev_ctx_t *ctx = (stmdev_ctx_t *)&cfg->ctx;
+	const struct gpio_dt_spec *gpio_spec;
+	const struct counter_capture_dt_spec *counter_spec;
 	int ret;
 
-	lsm6dsv16x->drdy_gpio = (cfg->drdy_pin == 1) ?
-			(struct gpio_dt_spec *)&cfg->int1_gpio :
-			(struct gpio_dt_spec *)&cfg->int2_gpio;
+	gpio_spec = (cfg->drdy_pin == 1) ? &cfg->int1_gpio : &cfg->int2_gpio;
+	lsm6dsv16x->drdy_gpio =
+		(gpio_spec->port != NULL) ? (struct gpio_dt_spec *)gpio_spec : NULL;
+
+	counter_spec = (cfg->drdy_pin == 1) ? &cfg->int1_counter_capture : &cfg->int2_counter_capture;
+	lsm6dsv16x->drdy_counter_capture =
+		(counter_spec->dev != NULL) ? counter_spec : NULL;
 
 	/* setup data ready gpio interrupt (INT1 or INT2) */
-	if ((!ON_I3C_BUS(cfg) || (I3C_INT_PIN(cfg))) && !gpio_is_ready_dt(lsm6dsv16x->drdy_gpio)) {
+	if (LSM6DSV16X_USING_GPIO_TRIGGER(dev) &&
+	    !gpio_is_ready_dt(lsm6dsv16x->drdy_gpio)) {
 		LOG_ERR("Cannot get pointer to drdy_gpio device");
+		return -EINVAL;
+	}
+
+	if ((lsm6dsv16x->drdy_counter_capture != NULL) &&
+	    !device_is_ready(lsm6dsv16x->drdy_counter_capture->dev)) {
+		LOG_ERR("Counter capture device is not ready");
 		return -EINVAL;
 	}
 
@@ -410,7 +463,7 @@ int lsm6dsv16x_init_interrupt(const struct device *dev)
 	lsm6dsv16x->work.handler = lsm6dsv16x_work_cb;
 #endif /* CONFIG_LSM6DSV16X_TRIGGER_OWN_THREAD */
 
-	if (!ON_I3C_BUS(cfg) || (I3C_INT_PIN(cfg))) {
+	if (LSM6DSV16X_USING_GPIO_TRIGGER(dev)) {
 		ret = gpio_pin_configure_dt(lsm6dsv16x->drdy_gpio, GPIO_INPUT);
 		if (ret < 0) {
 			LOG_DBG("Could not configure gpio");
@@ -426,6 +479,35 @@ int lsm6dsv16x_init_interrupt(const struct device *dev)
 			return -EIO;
 		}
 
+	} else if (lsm6dsv16x->drdy_counter_capture != NULL) {
+		struct counter_capture_dt_spec counter_spec = *lsm6dsv16x->drdy_counter_capture;
+
+		counter_spec.flags |= COUNTER_CAPTURE_CONTINUOUS;
+
+#ifdef CONFIG_COUNTER_64BITS_TICKS
+		ret = counter_capture_callback_set_64_dt(&counter_spec,
+							lsm6dsv16x_counter_capture_callback_64,
+							lsm6dsv16x);
+		if (ret == -ENOTSUP) {
+			ret = counter_capture_callback_set_dt(&counter_spec,
+						      lsm6dsv16x_counter_capture_callback,
+						      lsm6dsv16x);
+		}
+#else
+		ret = counter_capture_callback_set_dt(&counter_spec,
+						      lsm6dsv16x_counter_capture_callback,
+						      lsm6dsv16x);
+#endif /* CONFIG_COUNTER_64BITS_TICKS */
+		if (ret < 0) {
+			LOG_ERR("Could not set counter capture callback");
+			return ret;
+		}
+
+		ret = counter_enable_capture_dt(lsm6dsv16x->drdy_counter_capture);
+		if (ret < 0) {
+			LOG_ERR("Could not enable counter capture");
+			return ret;
+		}
 	}
 
 	/* set data ready mode on int1/int2/tir */
@@ -450,11 +532,13 @@ int lsm6dsv16x_init_interrupt(const struct device *dev)
 				return ret;
 			}
 
-			ret = gpio_pin_interrupt_configure_dt(lsm6dsv16x->drdy_gpio,
+			if (lsm6dsv16x->drdy_gpio != NULL) {
+				ret = gpio_pin_interrupt_configure_dt(lsm6dsv16x->drdy_gpio,
 							      GPIO_INT_EDGE_TO_ACTIVE);
-			if (ret < 0) {
-				LOG_ERR("Could not configure gpio interrupt");
-				return ret;
+				if (ret < 0) {
+					LOG_ERR("Could not configure gpio interrupt");
+					return ret;
+				}
 			}
 		} else {
 			/* I3C IBI does not utilize GPIO interrupt. */
@@ -487,6 +571,10 @@ int lsm6dsv16x_init_interrupt(const struct device *dev)
 	}
 #endif
 
-	return gpio_pin_interrupt_configure_dt(lsm6dsv16x->drdy_gpio,
+	if (lsm6dsv16x->drdy_gpio != NULL) {
+		return gpio_pin_interrupt_configure_dt(lsm6dsv16x->drdy_gpio,
 					       GPIO_INT_EDGE_TO_ACTIVE);
+	}
+
+	return 0;
 }
