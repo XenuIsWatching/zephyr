@@ -1805,7 +1805,7 @@ static inline int z_impl_i3c_do_ccc(const struct device *dev,
 
 #if defined(CONFIG_I3C_CALLBACK) || defined(__DOXYGEN__)
 /**
- * @brief Send CCC to the bus.
+ * @brief Send an async CCC to the bus with a callback.
  *
  * This routine provides a generic interface to perform a CCC
  * to another I3C device asynchronously with a callback completion.
@@ -1890,7 +1890,8 @@ static inline int z_impl_i3c_transfer(struct i3c_device_desc *target,
 
 #if defined(CONFIG_I3C_CALLBACK) || defined(__DOXYGEN__)
 /**
- * @brief Perform data transfer from the controller to a I3C target device.
+ * @brief Perform an async data transfer from the controller to a I3C target device
+ * with a callback.
  *
  * This routine provides a generic interface to perform data transfer
  * to a target device synchronously. Use i3c_read()/i3c_write()
