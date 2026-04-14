@@ -1473,51 +1473,21 @@ static void cdns_i3c_start_transfer(const struct device *dev)
 	sys_write32(CTRL_MCS | sys_read32(config->base + CTRL), config->base + CTRL);
 }
 
-static int cdns_i3c_do_ccc_do(const struct device *dev, struct i3c_ccc_payload *payload, bool async,
-			      i3c_callback_t cb, void *userdata)
+static int cdns_i3c_xfer_begin(const struct device *dev, bool async,
+			       i3c_callback_t cb, void *userdata)
 {
 	const struct cdns_i3c_config *config = dev->config;
 	struct cdns_i3c_data *data = dev->data;
-	struct cdns_i3c_cmd *cmd;
-	int ret = 0;
-	uint8_t num_cmds = 0;
+	int ret;
 
-	__ASSERT_NO_MSG(payload != NULL);
-
-	/*
-	 * Ensure data will fit within FIFOs.
-	 *
-	 * TODO: This limitation prevents burst transfers greater than the
-	 *       FIFO sizes and should be replaced with an implementation that
-	 *       utilizes the RX/TX data threshold interrupts.
-	 */
-	uint32_t num_msgs =
-		1 + ((payload->ccc.data_len > 0) ? payload->targets.num_targets
-						 : MAX(payload->targets.num_targets - 1, 0));
-	if (num_msgs > data->hw_cfg.cmd_mem_depth || num_msgs > data->hw_cfg.cmdr_mem_depth) {
-		LOG_ERR("%s: Too many messages", dev->name);
-		return -ENOMEM;
-	}
-
-	uint32_t rxsize = 0;
-	/* defining byte is stored in a separate register for direct CCCs */
-	uint32_t txsize =
-		i3c_ccc_is_payload_broadcast(payload) ? ROUND_UP(payload->ccc.data_len, 4) : 0;
-
-	for (int i = 0; i < payload->targets.num_targets; i++) {
-		if (payload->targets.payloads[i].rnw) {
-			rxsize += ROUND_UP(payload->targets.payloads[i].data_len, 4);
-		} else {
-			txsize += ROUND_UP(payload->targets.payloads[i].data_len, 4);
-		}
-	}
-	if ((rxsize > data->hw_cfg.rx_mem_depth) || (txsize > data->hw_cfg.tx_mem_depth)) {
-		LOG_ERR("%s: Total RX and/or TX transfer larger than FIFO", dev->name);
-		return -ENOMEM;
-	}
+#if !defined(CONFIG_I3C_CALLBACK) && !defined(CONFIG_I2C_CALLBACK)
+	ARG_UNUSED(async);
+	ARG_UNUSED(cb);
+	ARG_UNUSED(userdata);
+#endif
 
 	k_mutex_lock(&data->bus_lock, K_FOREVER);
-#ifdef CONFIG_I3C_CALLBACK
+#if defined(CONFIG_I3C_CALLBACK) || defined(CONFIG_I2C_CALLBACK)
 	k_sem_take(&data->async_sem, K_FOREVER);
 	if (async) {
 		data->cb = cb;
@@ -1532,137 +1502,232 @@ static int cdns_i3c_do_ccc_do(const struct device *dev, struct i3c_ccc_payload *
 	/* make sure we are currently the active controller */
 	if (!(sys_read32(config->base + MST_STATUS0) & MST_STATUS0_MASTER_MODE)) {
 		ret = -EACCES;
-		goto error;
+		goto fail;
 	}
 
-	/* wait for idle */
 	ret = cdns_i3c_wait_for_idle(dev);
 	if (ret != 0) {
-		goto error;
+		goto fail;
 	}
 
-	/* if this is a direct CCC */
-	if (!i3c_ccc_is_payload_broadcast(payload)) {
-		/* if the CCC has no data bytes, then the target payload must be in
-		 * the same command buffer
-		 */
-		for (int i = 0; i < payload->targets.num_targets; i++) {
-			cmd = &data->xfer.cmds[i];
-			num_cmds++;
-			cmd->cmd1 = CMD1_FIFO_CCC(payload->ccc.id);
-			cmd->cmd0 = CMD0_FIFO_IS_CCC;
-			/* if there is a defining byte */
-			if (payload->ccc.data_len == 1) {
-				/* Only revision 1p7 supports defining byte for direct CCCs */
-				if (REV_ID_REV(data->hw_cfg.rev_id) >= REV_ID_VERSION(1, 7)) {
-					cmd->cmd0 |= CMD0_FIFO_IS_DB;
-					cmd->cmd1 |= CMD1_FIFO_DB(payload->ccc.data[0]);
-				} else {
-					LOG_ERR("%s: Defining Byte with Direct CCC not supported "
-						"with rev %lup%lu",
-						dev->name, REV_ID_REV_MAJOR(data->hw_cfg.rev_id),
-						REV_ID_REV_MINOR(data->hw_cfg.rev_id));
-					ret = -ENOTSUP;
-					goto error;
-				}
-			} else if (payload->ccc.data_len > 1) {
-				LOG_ERR("%s: Defining Byte length greater than 1", dev->name);
-				ret = -EINVAL;
-				goto error;
-			}
-			/* for a short CCC, i.e. where a direct ccc has multiple targets,
-			 * BCH must be 0 for subsequent targets and RSBC must be 1, otherwise
-			 * if there is just one target, RSBC must be 0 on the first target
-			 */
-			if (i == 0) {
-				cmd->cmd0 |= CMD0_FIFO_BCH;
-			}
-			if (i < (payload->targets.num_targets - 1)) {
-				cmd->cmd0 |= CMD0_FIFO_RSBC;
-			}
-			cmd->buf = payload->targets.payloads[i].data;
-			cmd->len = payload->targets.payloads[i].data_len;
-			cmd->cmd0 |= CMD0_FIFO_DEV_ADDR(payload->targets.payloads[i].addr) |
-				     CMD0_FIFO_PL_LEN(payload->targets.payloads[i].data_len);
-			if (payload->targets.payloads[i].rnw) {
-				cmd->cmd0 |= CMD0_FIFO_RNW;
-			}
-			cmd->hdr = I3C_DATA_RATE_SDR;
-			/*
-			 * write the address of num_xfer and err which is to be updated upon
-			 * message completion
-			 */
-			cmd->num_xfer = (uint32_t *)&(payload->targets.payloads[i].num_xfer);
-			cmd->sdr_err = &(payload->targets.payloads[i].err);
-		}
-	} else {
-		cmd = &data->xfer.cmds[0];
-		num_cmds++;
-		cmd->cmd1 = CMD1_FIFO_CCC(payload->ccc.id);
-		cmd->cmd0 = CMD0_FIFO_IS_CCC | CMD0_FIFO_BCH;
-		cmd->hdr = I3C_DATA_RATE_SDR;
+	return 0;
 
-		if (payload->ccc.data_len > 0) {
-			/* Write additional data for CCC if needed */
-			cmd->buf = payload->ccc.data;
-			cmd->len = payload->ccc.data_len;
-			cmd->cmd0 |= CMD0_FIFO_PL_LEN(payload->ccc.data_len);
-			/* write the address of num_xfer which is to be updated upon message
-			 * completion
-			 */
-			cmd->num_xfer = (uint32_t *)&(payload->ccc.num_xfer);
-		} else {
-			/* no data to transfer */
-			cmd->len = 0;
-			cmd->num_xfer = NULL;
-		}
-		cmd->sdr_err = &(payload->ccc.err);
-	}
+fail:
+	pm_device_busy_clear(dev);
+#if defined(CONFIG_I3C_CALLBACK) || defined(CONFIG_I2C_CALLBACK)
+	k_sem_give(&data->async_sem);
+#endif
+	k_mutex_unlock(&data->bus_lock);
+	return ret;
+}
+
+static int cdns_i3c_xfer_kickoff(const struct device *dev, bool async, uint8_t num_cmds)
+{
+	struct cdns_i3c_data *data = dev->data;
 
 	data->xfer.ret = -ETIMEDOUT;
 	data->xfer.num_cmds = num_cmds;
 
 	cdns_i3c_start_transfer(dev);
+
 	if (!async) {
 		if (k_sem_take(&data->xfer.complete, K_MSEC(1000)) != 0) {
 			LOG_ERR("%s: transfer timed out", dev->name);
 			cdns_i3c_cancel_transfer(dev);
 		}
+		return data->xfer.ret;
 	}
-#ifdef CONFIG_I3C_CALLBACK
-	else {
-		k_timer_start(&data->timeout, K_MSEC(1000), K_NO_WAIT);
-	}
+#if defined(CONFIG_I3C_CALLBACK) || defined(CONFIG_I2C_CALLBACK)
+	k_timer_start(&data->timeout, K_MSEC(1000), K_NO_WAIT);
 #endif
+	return 0;
+}
 
-	if (!async && data->xfer.ret < 0) {
-		LOG_ERR("%s: CCC[0x%02x] error (%d)", dev->name, payload->ccc.id, data->xfer.ret);
-	}
+static int cdns_i3c_xfer_end(const struct device *dev, bool async, int ret)
+{
+	struct cdns_i3c_data *data = dev->data;
 
-	if (!async) {
-		ret = data->xfer.ret;
-	} else {
-		ret = 0;
-	}
-#if defined(CONFIG_I3C_CONTROLLER) && defined(CONFIG_I3C_TARGET)
-	/* TODO: decide if this is the right approach or add a new separate API for CH */
-	/* Wait for Controller Handoff to finish */
-	if (payload->ccc.id == I3C_CCC_GETACCCR) {
-		ret = k_sem_take(&data->ch_complete, K_MSEC(1000));
-	}
-#endif /* CONFIG_I3C_CONTROLLER && CONFIG_I3C_TARGET */
-error:
-#ifdef CONFIG_I3C_CALLBACK
+#if defined(CONFIG_I3C_CALLBACK) || defined(CONFIG_I2C_CALLBACK)
 	if (!async || ret != 0) {
 		pm_device_busy_clear(dev);
 		k_sem_give(&data->async_sem);
 	}
 #else
+	ARG_UNUSED(async);
 	pm_device_busy_clear(dev);
 #endif
 	k_mutex_unlock(&data->bus_lock);
-
 	return ret;
+}
+
+static int cdns_i3c_ccc_fifo_check(const struct device *dev, struct i3c_ccc_payload *payload)
+{
+	struct cdns_i3c_data *data = dev->data;
+	uint32_t num_msgs =
+		1 + ((payload->ccc.data_len > 0) ? payload->targets.num_targets
+						 : MAX(payload->targets.num_targets - 1, 0));
+	uint32_t rxsize = 0;
+	/* defining byte is stored in a separate register for direct CCCs */
+	uint32_t txsize =
+		i3c_ccc_is_payload_broadcast(payload) ? ROUND_UP(payload->ccc.data_len, 4) : 0;
+
+	/*
+	 * Ensure data will fit within FIFOs.
+	 *
+	 * TODO: This limitation prevents burst transfers greater than the
+	 *       FIFO sizes and should be replaced with an implementation that
+	 *       utilizes the RX/TX data threshold interrupts.
+	 */
+	if (num_msgs > data->hw_cfg.cmd_mem_depth || num_msgs > data->hw_cfg.cmdr_mem_depth) {
+		LOG_ERR("%s: Too many messages", dev->name);
+		return -ENOMEM;
+	}
+
+	for (int i = 0; i < payload->targets.num_targets; i++) {
+		if (payload->targets.payloads[i].rnw) {
+			rxsize += ROUND_UP(payload->targets.payloads[i].data_len, 4);
+		} else {
+			txsize += ROUND_UP(payload->targets.payloads[i].data_len, 4);
+		}
+	}
+	if ((rxsize > data->hw_cfg.rx_mem_depth) || (txsize > data->hw_cfg.tx_mem_depth)) {
+		LOG_ERR("%s: Total RX and/or TX transfer larger than FIFO", dev->name);
+		return -ENOMEM;
+	}
+
+	return 0;
+}
+
+static int cdns_i3c_ccc_build_direct(const struct device *dev, struct i3c_ccc_payload *payload,
+				     uint8_t *num_cmds_out)
+{
+	struct cdns_i3c_data *data = dev->data;
+
+	/* if the CCC has no data bytes, then the target payload must be in
+	 * the same command buffer
+	 */
+	for (int i = 0; i < payload->targets.num_targets; i++) {
+		struct cdns_i3c_cmd *cmd = &data->xfer.cmds[i];
+
+		cmd->cmd1 = CMD1_FIFO_CCC(payload->ccc.id);
+		cmd->cmd0 = CMD0_FIFO_IS_CCC;
+		/* if there is a defining byte */
+		if (payload->ccc.data_len == 1) {
+			/* Only revision 1p7 supports defining byte for direct CCCs */
+			if (REV_ID_REV(data->hw_cfg.rev_id) >= REV_ID_VERSION(1, 7)) {
+				cmd->cmd0 |= CMD0_FIFO_IS_DB;
+				cmd->cmd1 |= CMD1_FIFO_DB(payload->ccc.data[0]);
+			} else {
+				LOG_ERR("%s: Defining Byte with Direct CCC not supported "
+					"with rev %lup%lu",
+					dev->name, REV_ID_REV_MAJOR(data->hw_cfg.rev_id),
+					REV_ID_REV_MINOR(data->hw_cfg.rev_id));
+				return -ENOTSUP;
+			}
+		} else if (payload->ccc.data_len > 1) {
+			LOG_ERR("%s: Defining Byte length greater than 1", dev->name);
+			return -EINVAL;
+		}
+		/* for a short CCC, i.e. where a direct ccc has multiple targets,
+		 * BCH must be 0 for subsequent targets and RSBC must be 1, otherwise
+		 * if there is just one target, RSBC must be 0 on the first target
+		 */
+		if (i == 0) {
+			cmd->cmd0 |= CMD0_FIFO_BCH;
+		}
+		if (i < (payload->targets.num_targets - 1)) {
+			cmd->cmd0 |= CMD0_FIFO_RSBC;
+		}
+		cmd->buf = payload->targets.payloads[i].data;
+		cmd->len = payload->targets.payloads[i].data_len;
+		cmd->cmd0 |= CMD0_FIFO_DEV_ADDR(payload->targets.payloads[i].addr) |
+			     CMD0_FIFO_PL_LEN(payload->targets.payloads[i].data_len);
+		if (payload->targets.payloads[i].rnw) {
+			cmd->cmd0 |= CMD0_FIFO_RNW;
+		}
+		cmd->hdr = I3C_DATA_RATE_SDR;
+		/*
+		 * write the address of num_xfer and err which is to be updated upon
+		 * message completion
+		 */
+		cmd->num_xfer = (uint32_t *)&(payload->targets.payloads[i].num_xfer);
+		cmd->sdr_err = &(payload->targets.payloads[i].err);
+	}
+
+	*num_cmds_out = payload->targets.num_targets;
+	return 0;
+}
+
+static void cdns_i3c_ccc_build_broadcast(const struct device *dev,
+					 struct i3c_ccc_payload *payload)
+{
+	struct cdns_i3c_data *data = dev->data;
+	struct cdns_i3c_cmd *cmd = &data->xfer.cmds[0];
+
+	cmd->cmd1 = CMD1_FIFO_CCC(payload->ccc.id);
+	cmd->cmd0 = CMD0_FIFO_IS_CCC | CMD0_FIFO_BCH;
+	cmd->hdr = I3C_DATA_RATE_SDR;
+
+	if (payload->ccc.data_len > 0) {
+		/* Write additional data for CCC if needed */
+		cmd->buf = payload->ccc.data;
+		cmd->len = payload->ccc.data_len;
+		cmd->cmd0 |= CMD0_FIFO_PL_LEN(payload->ccc.data_len);
+		/* write the address of num_xfer which is to be updated upon message
+		 * completion
+		 */
+		cmd->num_xfer = (uint32_t *)&(payload->ccc.num_xfer);
+	} else {
+		/* no data to transfer */
+		cmd->len = 0;
+		cmd->num_xfer = NULL;
+	}
+	cmd->sdr_err = &(payload->ccc.err);
+}
+
+static int cdns_i3c_do_ccc_do(const struct device *dev, struct i3c_ccc_payload *payload, bool async,
+			      i3c_callback_t cb, void *userdata)
+{
+	uint8_t num_cmds = 1;
+	int ret;
+
+	__ASSERT_NO_MSG(payload != NULL);
+
+	ret = cdns_i3c_ccc_fifo_check(dev, payload);
+	if (ret != 0) {
+		return ret;
+	}
+
+	ret = cdns_i3c_xfer_begin(dev, async, cb, userdata);
+	if (ret != 0) {
+		return ret;
+	}
+
+	if (!i3c_ccc_is_payload_broadcast(payload)) {
+		ret = cdns_i3c_ccc_build_direct(dev, payload, &num_cmds);
+		if (ret != 0) {
+			return cdns_i3c_xfer_end(dev, async, ret);
+		}
+	} else {
+		cdns_i3c_ccc_build_broadcast(dev, payload);
+	}
+
+	ret = cdns_i3c_xfer_kickoff(dev, async, num_cmds);
+	if (!async && ret < 0) {
+		LOG_ERR("%s: CCC[0x%02x] error (%d)", dev->name, payload->ccc.id, ret);
+	}
+
+#if defined(CONFIG_I3C_CONTROLLER) && defined(CONFIG_I3C_TARGET)
+	/* TODO: decide if this is the right approach or add a new separate API for CH */
+	/* Wait for Controller Handoff to finish */
+	if (payload->ccc.id == I3C_CCC_GETACCCR) {
+		struct cdns_i3c_data *data = dev->data;
+
+		ret = k_sem_take(&data->ch_complete, K_MSEC(1000));
+	}
+#endif /* CONFIG_I3C_CONTROLLER && CONFIG_I3C_TARGET */
+
+	return cdns_i3c_xfer_end(dev, async, ret);
 }
 
 /**
@@ -2138,26 +2203,18 @@ static void cdns_i3c_complete_transfer(const struct device *dev)
  * @retval -EIO General input / output error.
  * @retval -EINVAL Address not registered
  */
-static int cdns_i3c_i2c_transfer_do(const struct device *dev, struct i3c_i2c_device_desc *i2c_dev,
-				    struct i2c_msg *msgs, uint8_t num_msgs, bool async,
-				    i2c_callback_t cb, void *userdata)
+static int cdns_i3c_i2c_msg_fifo_check(const struct device *dev, struct i2c_msg *msgs,
+				       uint8_t num_msgs)
 {
-	const struct cdns_i3c_config *config = dev->config;
 	struct cdns_i3c_data *data = dev->data;
 	uint32_t txsize = 0;
 	uint32_t rxsize = 0;
-	int ret;
-
-	__ASSERT_NO_MSG(num_msgs > 0);
 
 	if (num_msgs > data->hw_cfg.cmd_mem_depth || num_msgs > data->hw_cfg.cmdr_mem_depth) {
 		LOG_ERR("%s: Too many messages", dev->name);
 		return -ENOMEM;
 	}
 
-	/*
-	 * Ensure data will fit within FIFOs
-	 */
 	for (unsigned int i = 0; i < num_msgs; i++) {
 		if ((msgs[i].flags & I2C_MSG_RW_MASK) == I2C_MSG_READ) {
 			rxsize += ROUND_UP(msgs[i].len, 4);
@@ -2170,89 +2227,65 @@ static int cdns_i3c_i2c_transfer_do(const struct device *dev, struct i3c_i2c_dev
 		return -ENOMEM;
 	}
 
-	k_mutex_lock(&data->bus_lock, K_FOREVER);
-#ifdef CONFIG_I2C_CALLBACK
-	k_sem_take(&data->async_sem, K_FOREVER);
-	if (async) {
-		data->cb = cb;
-		data->userdata = userdata;
-	} else {
-		data->cb = NULL;
-		data->userdata = NULL;
-	}
-#endif
-	pm_device_busy_set(dev);
+	return 0;
+}
 
-	/* make sure we are currently the active controller */
-	if (!(sys_read32(config->base + MST_STATUS0) & MST_STATUS0_MASTER_MODE)) {
-		ret = -EACCES;
-		goto error;
+static void cdns_i3c_i2c_msg_build(struct i3c_i2c_device_desc *i2c_dev, struct i2c_msg *msg,
+				   struct cdns_i3c_cmd *cmd, bool is_last)
+{
+	cmd->len = msg->len;
+	cmd->buf = msg->buf;
+	/* not an i3c transfer, but must be set to sdr */
+	cmd->hdr = I3C_DATA_RATE_SDR;
+
+	cmd->cmd0 = CMD0_FIFO_PRIV_XMIT_MODE(XMIT_BURST_WITHOUT_SUBADDR);
+	cmd->cmd0 |= CMD0_FIFO_DEV_ADDR(i2c_dev->addr);
+	cmd->cmd0 |= CMD0_FIFO_PL_LEN(msg->len);
+
+	/* Send repeated start on all transfers except the last or those marked STOP. */
+	if (!is_last && ((msg->flags & I2C_MSG_STOP) == 0)) {
+		cmd->cmd0 |= CMD0_FIFO_RSBC;
 	}
 
-	/* wait for idle */
-	ret = cdns_i3c_wait_for_idle(dev);
+	if (msg->flags & I2C_MSG_ADDR_10_BITS) {
+		cmd->cmd0 |= CMD0_FIFO_IS_10B;
+	}
+
+	if ((msg->flags & I2C_MSG_RW_MASK) == I2C_MSG_READ) {
+		cmd->cmd0 |= CMD0_FIFO_RNW;
+	}
+
+	/* i2c transfers are a don't care for num_xfer and sdr error */
+	cmd->num_xfer = NULL;
+	cmd->sdr_err = NULL;
+}
+
+static int cdns_i3c_i2c_transfer_do(const struct device *dev, struct i3c_i2c_device_desc *i2c_dev,
+				    struct i2c_msg *msgs, uint8_t num_msgs, bool async,
+				    i2c_callback_t cb, void *userdata)
+{
+	struct cdns_i3c_data *data = dev->data;
+	int ret;
+
+	__ASSERT_NO_MSG(num_msgs > 0);
+
+	ret = cdns_i3c_i2c_msg_fifo_check(dev, msgs, num_msgs);
 	if (ret != 0) {
-		goto error;
+		return ret;
+	}
+
+	ret = cdns_i3c_xfer_begin(dev, async, (i3c_callback_t)cb, userdata);
+	if (ret != 0) {
+		return ret;
 	}
 
 	for (unsigned int i = 0; i < num_msgs; i++) {
-		struct cdns_i3c_cmd *cmd = &data->xfer.cmds[i];
-
-		cmd->len = msgs[i].len;
-		cmd->buf = msgs[i].buf;
-		/* not an i3c transfer, but must be set to sdr */
-		cmd->hdr = I3C_DATA_RATE_SDR;
-
-		cmd->cmd0 = CMD0_FIFO_PRIV_XMIT_MODE(XMIT_BURST_WITHOUT_SUBADDR);
-		cmd->cmd0 |= CMD0_FIFO_DEV_ADDR(i2c_dev->addr);
-		cmd->cmd0 |= CMD0_FIFO_PL_LEN(msgs[i].len);
-
-		/* Send repeated start on all transfers except the last or those marked STOP. */
-		if ((i < (num_msgs - 1)) && ((msgs[i].flags & I2C_MSG_STOP) == 0)) {
-			cmd->cmd0 |= CMD0_FIFO_RSBC;
-		}
-
-		if (msgs[i].flags & I2C_MSG_ADDR_10_BITS) {
-			cmd->cmd0 |= CMD0_FIFO_IS_10B;
-		}
-
-		if ((msgs[i].flags & I2C_MSG_RW_MASK) == I2C_MSG_READ) {
-			cmd->cmd0 |= CMD0_FIFO_RNW;
-		}
-
-		/* i2c transfers are a don't care for num_xfer and sdr error */
-		cmd->num_xfer = NULL;
-		cmd->sdr_err = NULL;
+		cdns_i3c_i2c_msg_build(i2c_dev, &msgs[i], &data->xfer.cmds[i],
+				       i == (unsigned int)(num_msgs - 1));
 	}
 
-	data->xfer.ret = -ETIMEDOUT;
-	data->xfer.num_cmds = num_msgs;
-
-	cdns_i3c_start_transfer(dev);
-	if (!async) {
-		if (k_sem_take(&data->xfer.complete, K_MSEC(1000)) != 0) {
-			cdns_i3c_cancel_transfer(dev);
-		}
-		ret = data->xfer.ret;
-	}
-#ifdef CONFIG_I2C_CALLBACK
-	else {
-		k_timer_start(&data->timeout, K_MSEC(1000), K_NO_WAIT);
-		ret = 0;
-	}
-#endif
-error:
-#ifdef CONFIG_I2C_CALLBACK
-	if (!async || ret != 0) {
-		pm_device_busy_clear(dev);
-		k_sem_give(&data->async_sem);
-	}
-#else
-	pm_device_busy_clear(dev);
-#endif
-	k_mutex_unlock(&data->bus_lock);
-
-	return ret;
+	ret = cdns_i3c_xfer_kickoff(dev, async, num_msgs);
+	return cdns_i3c_xfer_end(dev, async, ret);
 }
 
 /**
@@ -2501,17 +2534,12 @@ static int cdns_i3c_i2c_detach_device(const struct device *dev, struct i3c_i2c_d
 	return 0;
 }
 
-static int cdns_i3c_transfer_do(const struct device *dev, struct i3c_device_desc *target,
-				struct i3c_msg *msgs, uint8_t num_msgs, bool async,
-				i3c_callback_t cb, void *userdata)
+static int cdns_i3c_msg_fifo_check(const struct device *dev, struct i3c_msg *msgs,
+				   uint8_t num_msgs)
 {
-	const struct cdns_i3c_config *config = dev->config;
 	struct cdns_i3c_data *data = dev->data;
 	int txsize = 0;
 	int rxsize = 0;
-	int ret;
-
-	__ASSERT_NO_MSG(num_msgs > 0);
 
 	if (num_msgs > data->hw_cfg.cmd_mem_depth || num_msgs > data->hw_cfg.cmdr_mem_depth) {
 		LOG_ERR("%s: Too many messages", dev->name);
@@ -2537,29 +2565,123 @@ static int cdns_i3c_transfer_do(const struct device *dev, struct i3c_device_desc
 		return -ENOMEM;
 	}
 
-	k_mutex_lock(&data->bus_lock, K_FOREVER);
-#ifdef CONFIG_I3C_CALLBACK
-	k_sem_take(&data->async_sem, K_FOREVER);
-	if (async) {
-		data->cb = cb;
-		data->userdata = userdata;
+	return 0;
+}
+
+static void cdns_i3c_msg_build_sdr(struct i3c_device_desc *target, struct i3c_msg *msg,
+				   struct cdns_i3c_cmd *cmd, bool is_last, bool *send_broadcast)
+{
+	uint32_t pl = msg->len;
+
+	cmd->len = pl;
+	cmd->buf = msg->buf;
+
+	cmd->cmd0 = CMD0_FIFO_PRIV_XMIT_MODE(XMIT_BURST_WITHOUT_SUBADDR);
+	cmd->cmd0 |= CMD0_FIFO_DEV_ADDR(target->dynamic_addr);
+	if ((msg->flags & I3C_MSG_RW_MASK) == I3C_MSG_READ) {
+		cmd->cmd0 |= CMD0_FIFO_RNW;
+	}
+	/*
+	 * For I3C_XMIT_MODE_NO_ADDR reads in SDN mode,
+	 * CMD0_FIFO_PL_LEN specifies the abort limit not bytes to read
+	 */
+	cmd->cmd0 |= CMD0_FIFO_PL_LEN(pl);
+
+	/* Send broadcast header on first transfer or after a STOP. */
+	if (!(msg->flags & I3C_MSG_NBCH) && *send_broadcast) {
+		cmd->cmd0 |= CMD0_FIFO_BCH;
+		*send_broadcast = false;
+	}
+
+	/*
+	 * Send repeated start on all transfers except the last or those marked
+	 * STOP.
+	 */
+	if (!is_last && ((msg->flags & I3C_MSG_STOP) == 0)) {
+		cmd->cmd0 |= CMD0_FIFO_RSBC;
 	} else {
-		data->cb = NULL;
-		data->userdata = NULL;
-	}
-#endif
-	pm_device_busy_set(dev);
-
-	/* make sure we are currently the active controller */
-	if (!(sys_read32(config->base + MST_STATUS0) & MST_STATUS0_MASTER_MODE)) {
-		ret = -EACCES;
-		goto error;
+		*send_broadcast = true;
 	}
 
-	/* wait for idle */
-	ret = cdns_i3c_wait_for_idle(dev);
+	/*
+	 * write the address of num_xfer which is to be updated upon message
+	 * completion
+	 */
+	cmd->num_xfer = &(msg->num_xfer);
+	cmd->sdr_err = &(msg->err);
+	cmd->hdr = I3C_DATA_RATE_SDR;
+}
+
+static int cdns_i3c_msg_build_ddr(struct i3c_device_desc *target, struct i3c_msg *msg,
+				  struct cdns_i3c_cmd *cmd)
+{
+	uint32_t pl = msg->len;
+	uint16_t ddr_header_payload;
+
+	/* DDR sends data out in 16b, so len must be a multiple of 2 */
+	if ((pl % 2) != 0) {
+		return -EINVAL;
+	}
+
+	cmd->buf = msg->buf;
+	if ((msg->flags & I3C_MSG_RW_MASK) == I3C_MSG_READ) {
+		/* HDR-DDR Read */
+		ddr_header_payload = HDR_CMD_RD | HDR_CMD_CODE(msg->hdr_cmd_code) |
+				     (target->dynamic_addr << 1);
+		/* Parity Adjustment Bit for Reads */
+		ddr_header_payload = prepare_ddr_cmd_parity_adjustment_bit(ddr_header_payload);
+		/* HDR-DDR Command Word */
+		cmd->ddr_header = DDR_PREAMBLE_CMD_CRC | prepare_ddr_word(ddr_header_payload);
+	} else {
+		uint8_t crc5 = 0x1F;
+		/* HDR-DDR Write */
+		ddr_header_payload = HDR_CMD_CODE(msg->hdr_cmd_code) |
+				     (target->dynamic_addr << 1);
+		/* HDR-DDR Command Word */
+		cmd->ddr_header = DDR_PREAMBLE_CMD_CRC | prepare_ddr_word(ddr_header_payload);
+		/* calculate crc5 */
+		crc5 = i3c_cdns_crc5(crc5, ddr_header_payload);
+		for (int j = 0; j < pl; j += 2) {
+			crc5 = i3c_cdns_crc5(crc5,
+					     sys_get_be16((void *)((uintptr_t)cmd->buf + j)));
+		}
+		cmd->ddr_crc = DDR_PREAMBLE_CMD_CRC | DDR_CRC_TOKEN | (crc5 << 9) |
+			       DDR_CRC_WR_SETUP;
+	}
+	/* Length of DDR Transfer is length of payload (in 16b) + header and CRC blocks */
+	cmd->len = ((pl / 2) + 2);
+
+	/* prep command FIFO for ENTHDR0 */
+	cmd->cmd0 = CMD0_FIFO_IS_CCC;
+	cmd->cmd1 = I3C_CCC_ENTHDR0;
+	/*
+	 * write the address of num_xfer which is to be updated upon message
+	 * completion
+	 */
+	cmd->num_xfer = &(msg->num_xfer);
+	cmd->sdr_err = &(msg->err);
+	cmd->hdr = I3C_DATA_RATE_HDR_DDR;
+	return 0;
+}
+
+static int cdns_i3c_transfer_do(const struct device *dev, struct i3c_device_desc *target,
+				struct i3c_msg *msgs, uint8_t num_msgs, bool async,
+				i3c_callback_t cb, void *userdata)
+{
+	struct cdns_i3c_data *data = dev->data;
+	bool send_broadcast = true;
+	int ret;
+
+	__ASSERT_NO_MSG(num_msgs > 0);
+
+	ret = cdns_i3c_msg_fifo_check(dev, msgs, num_msgs);
 	if (ret != 0) {
-		goto error;
+		return ret;
+	}
+
+	ret = cdns_i3c_xfer_begin(dev, async, cb, userdata);
+	if (ret != 0) {
+		return ret;
 	}
 
 	/*
@@ -2568,146 +2690,29 @@ static int cdns_i3c_transfer_do(const struct device *dev, struct i3c_device_desc
 	 * this preparation could be completed outside of the bus lock allowing
 	 * greater parallelism.
 	 */
-	bool send_broadcast = true;
-
 	for (int i = 0; i < num_msgs; i++) {
 		struct cdns_i3c_cmd *cmd = &data->xfer.cmds[i];
-		uint32_t pl = msgs[i].len;
+		struct i3c_msg *msg = &msgs[i];
+
 		/* check hdr mode */
-		if ((!(msgs[i].flags & I3C_MSG_HDR)) ||
-		    ((msgs[i].flags & I3C_MSG_HDR) && (msgs[i].hdr_mode == 0))) {
-			/* HDR message flag is not set or if hdr flag is set but no hdr mode is set
-			 */
-			cmd->len = pl;
-			cmd->buf = msgs[i].buf;
-
-			cmd->cmd0 = CMD0_FIFO_PRIV_XMIT_MODE(XMIT_BURST_WITHOUT_SUBADDR);
-			cmd->cmd0 |= CMD0_FIFO_DEV_ADDR(target->dynamic_addr);
-			if ((msgs[i].flags & I3C_MSG_RW_MASK) == I3C_MSG_READ) {
-				cmd->cmd0 |= CMD0_FIFO_RNW;
-			}
-			/*
-			 * For I3C_XMIT_MODE_NO_ADDR reads in SDN mode,
-			 * CMD0_FIFO_PL_LEN specifies the abort limit not bytes to read
-			 */
-			cmd->cmd0 |= CMD0_FIFO_PL_LEN(pl);
-
-			/* Send broadcast header on first transfer or after a STOP. */
-			if (!(msgs[i].flags & I3C_MSG_NBCH) && (send_broadcast)) {
-				cmd->cmd0 |= CMD0_FIFO_BCH;
-				send_broadcast = false;
-			}
-
-			/*
-			 * Send repeated start on all transfers except the last or those marked
-			 * STOP.
-			 */
-			if ((i < (num_msgs - 1)) && ((msgs[i].flags & I3C_MSG_STOP) == 0)) {
-				cmd->cmd0 |= CMD0_FIFO_RSBC;
-			} else {
-				send_broadcast = true;
-			}
-
-			/*
-			 * write the address of num_xfer which is to be updated upon message
-			 * completion
-			 */
-			cmd->num_xfer = &(msgs[i].num_xfer);
-			cmd->sdr_err = &(msgs[i].err);
-			cmd->hdr = I3C_DATA_RATE_SDR;
+		if (!(msg->flags & I3C_MSG_HDR) ||
+		    ((msg->flags & I3C_MSG_HDR) && (msg->hdr_mode == 0))) {
+			cdns_i3c_msg_build_sdr(target, msg, cmd, i == (num_msgs - 1),
+					       &send_broadcast);
 		} else if ((data->common.ctrl_config.supported_hdr & I3C_MSG_HDR_DDR) &&
-			   (msgs[i].hdr_mode == I3C_MSG_HDR_DDR) && (msgs[i].flags & I3C_MSG_HDR)) {
-			uint16_t ddr_header_payload;
-
-			/* DDR sends data out in 16b, so len must be a multiple of 2 */
-			if (!((pl % 2) == 0)) {
-				ret = -EINVAL;
-				goto error;
+			   (msg->hdr_mode == I3C_MSG_HDR_DDR) && (msg->flags & I3C_MSG_HDR)) {
+			ret = cdns_i3c_msg_build_ddr(target, msg, cmd);
+			if (ret != 0) {
+				return cdns_i3c_xfer_end(dev, async, ret);
 			}
-			/* HDR message flag is set and hdr mode is DDR */
-			cmd->buf = msgs[i].buf;
-			if ((msgs[i].flags & I3C_MSG_RW_MASK) == I3C_MSG_READ) {
-				/* HDR-DDR Read */
-				ddr_header_payload = HDR_CMD_RD |
-						     HDR_CMD_CODE(msgs[i].hdr_cmd_code) |
-						     (target->dynamic_addr << 1);
-				/* Parity Adjustment Bit for Reads */
-				ddr_header_payload =
-					prepare_ddr_cmd_parity_adjustment_bit(ddr_header_payload);
-				/* HDR-DDR Command Word */
-				cmd->ddr_header =
-					DDR_PREAMBLE_CMD_CRC | prepare_ddr_word(ddr_header_payload);
-			} else {
-				uint8_t crc5 = 0x1F;
-				/* HDR-DDR Write */
-				ddr_header_payload = HDR_CMD_CODE(msgs[i].hdr_cmd_code) |
-						     (target->dynamic_addr << 1);
-				/* HDR-DDR Command Word */
-				cmd->ddr_header =
-					DDR_PREAMBLE_CMD_CRC | prepare_ddr_word(ddr_header_payload);
-				/* calculate crc5 */
-				crc5 = i3c_cdns_crc5(crc5, ddr_header_payload);
-				for (int j = 0; j < pl; j += 2) {
-					crc5 = i3c_cdns_crc5(
-						crc5,
-						sys_get_be16((void *)((uintptr_t)cmd->buf + j)));
-				}
-				cmd->ddr_crc = DDR_PREAMBLE_CMD_CRC | DDR_CRC_TOKEN | (crc5 << 9) |
-					       DDR_CRC_WR_SETUP;
-			}
-			/* Length of DDR Transfer is length of payload (in 16b) + header and CRC
-			 * blocks
-			 */
-			cmd->len = ((pl / 2) + 2);
-
-			/* prep command FIFO for ENTHDR0 */
-			cmd->cmd0 = CMD0_FIFO_IS_CCC;
-			cmd->cmd1 = I3C_CCC_ENTHDR0;
-			/* write the address of num_xfer which is to be updated upon message
-			 * completion
-			 */
-			cmd->num_xfer = &(msgs[i].num_xfer);
-			cmd->sdr_err = &(msgs[i].err);
-			cmd->hdr = I3C_DATA_RATE_HDR_DDR;
 		} else {
-			LOG_ERR("%s: Unsupported HDR Mode %d", dev->name, msgs[i].hdr_mode);
-			ret = -ENOTSUP;
-			goto error;
+			LOG_ERR("%s: Unsupported HDR Mode %d", dev->name, msg->hdr_mode);
+			return cdns_i3c_xfer_end(dev, async, -ENOTSUP);
 		}
 	}
 
-	data->xfer.ret = -ETIMEDOUT;
-	data->xfer.num_cmds = num_msgs;
-
-	cdns_i3c_start_transfer(dev);
-	if (!async) {
-		if (k_sem_take(&data->xfer.complete, K_MSEC(1000)) != 0) {
-			LOG_ERR("%s: transfer timed out", dev->name);
-			cdns_i3c_cancel_transfer(dev);
-		}
-	}
-#ifdef CONFIG_I3C_CALLBACK
-	else {
-		k_timer_start(&data->timeout, K_MSEC(1000), K_NO_WAIT);
-	}
-#endif
-	if (!async) {
-		ret = data->xfer.ret;
-	} else {
-		ret = 0;
-	}
-error:
-#ifdef CONFIG_I3C_CALLBACK
-	if (!async || ret != 0) {
-		pm_device_busy_clear(dev);
-		k_sem_give(&data->async_sem);
-	}
-#else
-	pm_device_busy_clear(dev);
-#endif
-	k_mutex_unlock(&data->bus_lock);
-
-	return ret;
+	ret = cdns_i3c_xfer_kickoff(dev, async, num_msgs);
+	return cdns_i3c_xfer_end(dev, async, ret);
 }
 
 /**
