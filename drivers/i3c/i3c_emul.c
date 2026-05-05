@@ -110,12 +110,6 @@ static struct i3c_emul *i3c_emul_lookup_by_dyn_addr(const struct device *bus, ui
 	return NULL;
 }
 
-static int i3c_emul_attach_i3c_device(const struct device *dev, struct i3c_device_desc *target)
-{
-	target->controller_priv = i3c_emul_lookup_by_pid(dev, target->pid);
-	return 0;
-}
-
 static struct i3c_emul *i3c_emul_find_by_addr(const struct device *dev, uint8_t addr,
 					      bool is_setdasa)
 {
@@ -189,22 +183,9 @@ static int i3c_emul_recover_bus(const struct device *dev)
 	return 0;
 }
 
-static int i3c_emul_reattach_i3c_device(const struct device *dev, struct i3c_device_desc *target,
-					uint8_t old_dyn_addr)
+static int i3c_emul_attach_i3c_device(const struct device *dev, struct i3c_device_desc *target)
 {
-	ARG_UNUSED(dev);
-	ARG_UNUSED(target);
-	ARG_UNUSED(old_dyn_addr);
-
-	/*
-	 * Controller-side bookkeeping only: i3c_bus_setdasa /
-	 * i3c_bus_setnewda call this after the wire CCC has already
-	 * run (and the bus emulator's do_ccc post-handler has already
-	 * updated the peripheral's dynamic_addr mirror via its
-	 * set_dynamic_addr callback). The address-slot map is updated
-	 * by i3c_common.c::i3c_reattach_i3c_device itself. There is
-	 * nothing additional for the emulator to do here.
-	 */
+	target->controller_priv = i3c_emul_lookup_by_pid(dev, target->pid);
 	return 0;
 }
 
@@ -225,22 +206,6 @@ static int i3c_emul_detach_i3c_device(const struct device *dev, struct i3c_devic
 	 * re-link the peripheral by walking on dynamic address.
 	 */
 	target->controller_priv = NULL;
-	return 0;
-}
-
-static int i3c_emul_attach_i2c_device(const struct device *dev,
-				      struct i3c_i2c_device_desc *target)
-{
-	ARG_UNUSED(dev);
-	ARG_UNUSED(target);
-	return 0;
-}
-
-static int i3c_emul_detach_i2c_device(const struct device *dev,
-				      struct i3c_i2c_device_desc *target)
-{
-	ARG_UNUSED(dev);
-	ARG_UNUSED(target);
 	return 0;
 }
 
@@ -1070,10 +1035,7 @@ static DEVICE_API(i3c, i3c_emul_api) = {
 	.config_get = i3c_emul_config_get,
 	.recover_bus = i3c_emul_recover_bus,
 	.attach_i3c_device = i3c_emul_attach_i3c_device,
-	.reattach_i3c_device = i3c_emul_reattach_i3c_device,
 	.detach_i3c_device = i3c_emul_detach_i3c_device,
-	.attach_i2c_device = i3c_emul_attach_i2c_device,
-	.detach_i2c_device = i3c_emul_detach_i2c_device,
 	.do_daa = i3c_emul_do_daa,
 	.do_ccc = i3c_emul_do_ccc,
 	.i3c_xfers = i3c_emul_xfers,
