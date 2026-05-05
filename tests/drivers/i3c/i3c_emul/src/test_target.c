@@ -7,16 +7,30 @@
  */
 
 #include <zephyr/devicetree.h>
+#include <zephyr/drivers/emul.h>
 #include <zephyr/drivers/i3c.h>
 #include <zephyr/drivers/i3c/target_device.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/ztest.h>
 
+#include "test_target_emul.h"
+
 #define I3C_BUS DT_NODELABEL(i3c0)
+#define TARGET_A DT_NODELABEL(test_target_a)
 #define TARGET_MODE_ADDR 0x6A
 
+#define TARGET_A_PID  ((uint64_t)0x1234 << 32 | 0x12345678)
+
 static const struct device *bus = DEVICE_DT_GET(I3C_BUS);
+static const struct emul *target_a_emul = EMUL_DT_GET(TARGET_A);
+
+static struct i3c_device_desc *find_desc(uint64_t pid)
+{
+	struct i3c_device_id id = I3C_DEVICE_ID(pid);
+
+	return i3c_device_find(bus, &id);
+}
 
 static struct {
 	atomic_t write_requested;
@@ -192,6 +206,36 @@ ZTEST(i3c_emul_target, test_controller_handoff_records)
 	zassert_equal(atomic_get(&g.handoff), 1, "handoff cb does NOT fire on nack");
 
 	(void)i3c_target_unregister(bus, &tcfg);
+}
+
+ZTEST(i3c_emul_target, test_controller_initiates_handoff_via_getacccr)
+{
+	struct i3c_device_desc *desc;
+	int rc;
+
+	/*
+	 * Drive the *initiation* side of controller handoff: the bus
+	 * emulator is the active controller; it issues the handoff CCC
+	 * sequence (DISEC broadcast, then GETACCCR direct) targeting an
+	 * attached peripheral. PLAN.md explicitly leaves the deeper
+	 * "newly-active controller now drives the bus" handoff state
+	 * machine out of scope (M5 non-goals); this covers the half
+	 * the emulator is responsible for: dispatching the wire CCCs
+	 * and round-tripping GETACCCR's parity-encoded reply.
+	 */
+	desc = find_desc(TARGET_A_PID);
+	zassert_not_null(desc, "target A desc");
+	if (desc->dynamic_addr == 0U) {
+		rc = i3c_bus_setdasa(desc, desc->static_addr);
+		zassert_ok(rc, "SETDASA: %d", rc);
+	}
+
+	test_target_clear_getacccr(target_a_emul);
+
+	rc = i3c_device_controller_handoff(desc, true);
+	zassert_ok(rc, "i3c_device_controller_handoff(requested=true): %d", rc);
+	zassert_true(test_target_getacccr_was_seen(target_a_emul),
+		     "peripheral should have answered GETACCCR");
 }
 
 ZTEST_SUITE(i3c_emul_target, NULL, target_setup, target_before, NULL, NULL);
