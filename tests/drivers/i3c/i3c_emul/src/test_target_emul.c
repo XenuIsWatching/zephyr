@@ -225,7 +225,26 @@ static int test_target_do_ccc(const struct emul *target, struct i3c_ccc_payload 
 	 * in sync for its CCC-dispatch lookup helper.
 	 */
 	case I3C_CCC_SETDASA:
+		/*
+		 * SETDASA assigns a dynamic address from the static address.
+		 * Per spec it is only legal for a target that does not
+		 * already have one — NACK if dyn_addr is already set.
+		 */
+		if (data->dyn_addr != 0U) {
+			return -EACCES;
+		}
+		if (tp != NULL && tp->data != NULL && tp->data_len >= 1U) {
+			data->dyn_addr = tp->data[0] >> 1;
+		}
+		return 0;
 	case I3C_CCC_SETNEWDA:
+		/*
+		 * SETNEWDA changes an existing dynamic address to a new
+		 * value — only legal for a target that already has one.
+		 */
+		if (data->dyn_addr == 0U) {
+			return -EACCES;
+		}
 		if (tp != NULL && tp->data != NULL && tp->data_len >= 1U) {
 			data->dyn_addr = tp->data[0] >> 1;
 		}
