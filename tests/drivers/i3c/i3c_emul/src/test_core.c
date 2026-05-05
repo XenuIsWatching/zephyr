@@ -42,10 +42,11 @@ ZTEST(i3c_emul_core, test_attach_and_setdasa_static_to_dynamic)
 	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
 
 	zassert_not_null(desc, "device desc for target A must exist");
-	zassert_equal(desc->static_addr, 0x55, "static addr expected 0x55");
-	zassert_equal(desc->dynamic_addr, 0x55,
+	zassert_equal(desc->static_addr, TEST_TARGET_A_STATIC,
+		      "static addr expected 0x%02x", TEST_TARGET_A_STATIC);
+	zassert_equal(desc->dynamic_addr, TEST_TARGET_A_STATIC,
 		      "i3c_bus_init should have promoted static addr to dynamic via SETDASA");
-	zassert_equal(test_target_get_dynamic_addr(target_a), 0x55,
+	zassert_equal(test_target_get_dynamic_addr(target_a), TEST_TARGET_A_STATIC,
 		      "peripheral should know its dynamic addr");
 }
 
@@ -125,7 +126,7 @@ ZTEST(i3c_emul_core, test_mock_api_returns_eio)
 
 static void *i3c_emul_setup(void)
 {
-	int rc = test_target_bus_known_state(bus, TARGET_A_PID, 0x55,
+	int rc = test_target_bus_known_state(bus, TARGET_A_PID, TEST_TARGET_A_STATIC,
 					     TARGET_B_PID, TARGET_B_INIT_DA);
 
 	zassert_ok(rc, "test_target_bus_known_state: %d", rc);
