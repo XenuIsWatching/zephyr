@@ -182,52 +182,140 @@ ZTEST(i3c_emul_target, test_target_tx_write_fifo)
 	(void)i3c_target_unregister(bus, &tcfg);
 }
 
-ZTEST(i3c_emul_target, test_controller_handoff_records)
+ZTEST(i3c_emul_target, test_controller_handoff_accept_records)
 {
 	int rc;
 
+	/*
+	 * i3c_target_controller_handoff(true) only stores the application's
+	 * willingness to accept a future handoff. It does NOT itself fire
+	 * controller_handoff_cb (real drivers fire that callback only when
+	 * the wire-level handoff actually completes — see i3c_dw.c and
+	 * i3c_cdns.c). Without a controller-side GETACCCR, the cb stays
+	 * silent.
+	 */
 	rc = i3c_target_register(bus, &tcfg);
 	zassert_ok(rc, "target_register: %d", rc);
 
-	/*
-	 * Accepting handoff invokes the controller_handoff_cb. Per the
-	 * I3C spec, is_secondary is the boot-time role and does not flip
-	 * here, so we don't assert on it.
-	 */
 	rc = i3c_target_controller_handoff(bus, true);
 	zassert_ok(rc, "handoff(true): %d", rc);
-	zassert_equal(atomic_get(&g.handoff), 1, "handoff cb fires on accept");
+	zassert_equal(atomic_get(&g.handoff), 0,
+		      "handoff cb must not fire from the API call alone");
 
-	/* NACK should not invoke the callback. */
 	rc = i3c_target_controller_handoff(bus, false);
 	zassert_ok(rc, "handoff(false): %d", rc);
-	zassert_equal(atomic_get(&g.handoff), 1, "handoff cb does NOT fire on nack");
+	zassert_equal(atomic_get(&g.handoff), 0, "handoff cb still silent on nack");
 
 	(void)i3c_target_unregister(bus, &tcfg);
 }
 
-ZTEST(i3c_emul_target, test_controller_initiates_handoff_via_getacccr)
+ZTEST(i3c_emul_target, test_handoff_completes_on_getacccr_to_registered_target)
+{
+	struct i3c_target_config tcfg_at_a = {
+		.address = 0,        /* filled in below from desc_a->dynamic_addr */
+		.callbacks = &tcb,
+	};
+	struct i3c_config_target out_cfg = { 0 };
+	struct i3c_device_desc *desc_a;
+	int rc;
+
+	/*
+	 * Spec model:
+	 * - Application brings the device's dynamic address up the proper
+	 *   way (SETDASA / DAA), then registers as a target at that same
+	 *   address. The bus emulator now routes CCCs at that address to
+	 *   the application's target_cfg instead of the peripheral emul.
+	 * - Application opts in via i3c_target_controller_handoff(true).
+	 * - Active controller initiates handoff via
+	 *   i3c_device_controller_handoff(desc, true), which issues
+	 *   GETACCCR at the address.
+	 * - The bus emulator detects "GETACCCR addressed to a registered
+	 *   target_cfg with handoff_accept set", replies parity-correctly,
+	 *   fires controller_handoff_cb, and flips
+	 *   target_config.enabled = false (we are the active controller
+	 *   now, not a target).
+	 */
+	desc_a = find_desc(TARGET_A_PID);
+	zassert_not_null(desc_a, "target A desc");
+	if (desc_a->dynamic_addr == 0U) {
+		rc = i3c_bus_setdasa(desc_a, desc_a->static_addr);
+		zassert_ok(rc, "SETDASA: %d", rc);
+	}
+
+	tcfg_at_a.address = desc_a->dynamic_addr;
+	rc = i3c_target_register(bus, &tcfg_at_a);
+	zassert_ok(rc, "target_register at 0x%02x: %d", tcfg_at_a.address, rc);
+
+	rc = i3c_config_get(bus, I3C_CONFIG_TARGET, &out_cfg);
+	zassert_ok(rc, "config_get: %d", rc);
+	zassert_true(out_cfg.enabled, "registering as target should set enabled");
+
+	rc = i3c_target_controller_handoff(bus, true);
+	zassert_ok(rc, "handoff(true): %d", rc);
+
+	rc = i3c_device_controller_handoff(desc_a, true);
+	zassert_ok(rc, "i3c_device_controller_handoff: %d", rc);
+
+	zassert_equal(atomic_get(&g.handoff), 1,
+		      "controller_handoff_cb fires on completed handoff");
+
+	rc = i3c_config_get(bus, I3C_CONFIG_TARGET, &out_cfg);
+	zassert_ok(rc, "config_get post-handoff: %d", rc);
+	zassert_false(out_cfg.enabled,
+		      "after handoff completes, the new active controller is no "
+		      "longer behaving as a target");
+
+	(void)i3c_target_unregister(bus, &tcfg_at_a);
+}
+
+ZTEST(i3c_emul_target, test_handoff_nacked_by_application_fails)
+{
+	struct i3c_target_config tcfg_at_a = {
+		.address = 0,
+		.callbacks = &tcb,
+	};
+	struct i3c_device_desc *desc_a;
+	int rc;
+
+	/* Same setup as the accept test, but the application explicitly
+	 * NACKs the handoff offer. The controller-side initiation must
+	 * fail and the callback must stay silent.
+	 */
+	desc_a = find_desc(TARGET_A_PID);
+	zassert_not_null(desc_a, "target A desc");
+	if (desc_a->dynamic_addr == 0U) {
+		rc = i3c_bus_setdasa(desc_a, desc_a->static_addr);
+		zassert_ok(rc, "SETDASA: %d", rc);
+	}
+
+	tcfg_at_a.address = desc_a->dynamic_addr;
+	rc = i3c_target_register(bus, &tcfg_at_a);
+	zassert_ok(rc, "target_register: %d", rc);
+
+	rc = i3c_target_controller_handoff(bus, false);
+	zassert_ok(rc, "handoff(false): %d", rc);
+
+	rc = i3c_device_controller_handoff(desc_a, true);
+	zassert_not_equal(rc, 0,
+			  "controller-side handoff must fail when the target NACKs");
+	zassert_equal(atomic_get(&g.handoff), 0, "callback must stay silent on NACK");
+
+	(void)i3c_target_unregister(bus, &tcfg_at_a);
+}
+
+ZTEST(i3c_emul_target, test_controller_handoff_to_peripheral_via_getacccr)
 {
 	struct i3c_device_desc *desc;
 	int rc;
 
 	/*
-	 * Drive the *initiation* side of controller handoff: the bus
-	 * emulator is the active controller; it issues the handoff CCC
-	 * sequence (DISEC broadcast, then GETACCCR direct) targeting an
-	 * attached peripheral. PLAN.md explicitly leaves the deeper
-	 * "newly-active controller now drives the bus" handoff state
-	 * machine out of scope (M5 non-goals); this covers the half
-	 * the emulator is responsible for: dispatching the wire CCCs
-	 * and round-tripping GETACCCR's parity-encoded reply.
-	 *
-	 * A 0 return from i3c_device_controller_handoff(requested=true)
-	 * implies i3c_bus_getacccr's parity check passed against
-	 * desc->dynamic_addr, which is only possible if (a) the bus
-	 * emulator dispatched GETACCCR to the right peripheral, (b)
-	 * the peripheral's do_ccc handled it, and (c) the reply byte
-	 * was spec-correct. So the assertion below is sufficient on
-	 * its own.
+	 * No target_cfg registered at desc->dynamic_addr — the GETACCCR
+	 * routes to the registered peripheral emul, which replies
+	 * parity-correctly. This is the "controller initiates handoff
+	 * to a secondary controller it knows about, but no application
+	 * on this device is acting as that target" scenario; the bus
+	 * emulator's CCC dispatch + the peripheral's GETACCCR responder
+	 * are what get exercised.
 	 */
 	desc = find_desc(TARGET_A_PID);
 	zassert_not_null(desc, "target A desc");
@@ -237,7 +325,7 @@ ZTEST(i3c_emul_target, test_controller_initiates_handoff_via_getacccr)
 	}
 
 	rc = i3c_device_controller_handoff(desc, true);
-	zassert_ok(rc, "i3c_device_controller_handoff(requested=true): %d", rc);
+	zassert_ok(rc, "i3c_device_controller_handoff: %d", rc);
 }
 
 ZTEST_SUITE(i3c_emul_target, NULL, target_setup, target_before, NULL, NULL);

@@ -339,9 +339,57 @@ static int i3c_emul_do_ccc_direct(const struct device *dev, struct i3c_ccc_paylo
 
 	for (size_t i = 0; i < payload->targets.num_targets; i++) {
 		struct i3c_ccc_target_payload *tp = &payload->targets.payloads[i];
-		struct i3c_emul *emul = i3c_emul_find_by_addr(dev, tp->addr, is_setdasa);
+		struct i3c_emul *emul;
 		int rc;
 
+#ifdef CONFIG_I3C_TARGET
+		struct i3c_emul_data *data = dev->data;
+
+		/*
+		 * If the application has registered as a target at this
+		 * address, the bus emulator handles the CCC instead of
+		 * routing it to a peripheral emul. Today only GETACCCR is
+		 * meaningful in this path: completing the wire-level
+		 * controller handoff and notifying the application.
+		 */
+		if (data->target_cfg != NULL && data->target_cfg->address == tp->addr) {
+			if (payload->ccc.id == I3C_CCC_GETACCCR) {
+				if (tp->data == NULL || tp->data_len < 1U) {
+					return -EINVAL;
+				}
+				if (!data->handoff_accept) {
+					/* NACK: leave the byte at zero so the
+					 * controller-side parity check fails.
+					 */
+					tp->data[0] = 0;
+					tp->num_xfer = 1U;
+					return -ENOTCONN;
+				}
+
+				tp->data[0] = (tp->addr << 1) | i3c_odd_parity(tp->addr);
+				tp->num_xfer = 1U;
+
+				/* Wire-level handoff completed: this device
+				 * just became the active controller and is
+				 * no longer behaving as a target.
+				 */
+				data->target_config.enabled = false;
+
+				if (data->target_cfg->callbacks != NULL &&
+				    data->target_cfg->callbacks->controller_handoff_cb != NULL) {
+					(void)data->target_cfg->callbacks
+						->controller_handoff_cb(data->target_cfg);
+				}
+				continue;
+			}
+			/* Other direct CCCs to a registered-target address are
+			 * not yet modelled; fall through to peripheral lookup,
+			 * which will likely return -ENODEV.
+			 */
+		}
+#endif /* CONFIG_I3C_TARGET */
+
+		emul = i3c_emul_find_by_addr(dev, tp->addr, is_setdasa);
 		if (emul == NULL) {
 			ret = ret ? ret : -ENODEV;
 			continue;
@@ -595,6 +643,8 @@ static int i3c_emul_target_register(const struct device *dev, struct i3c_target_
 	}
 
 	data->target_cfg = cfg;
+	data->target_config.enabled = true;
+	data->target_config.dynamic_addr = cfg->address;
 #if CONFIG_I3C_EMUL_TARGET_TX_FIFO_SIZE > 0
 	data->tx_fifo_len = 0;
 	data->tx_fifo_hdr_mode = 0;
@@ -611,6 +661,7 @@ static int i3c_emul_target_unregister(const struct device *dev, struct i3c_targe
 	}
 
 	data->target_cfg = NULL;
+	data->target_config.enabled = false;
 #if CONFIG_I3C_EMUL_TARGET_TX_FIFO_SIZE > 0
 	data->tx_fifo_len = 0;
 	data->tx_fifo_hdr_mode = 0;
@@ -652,20 +703,15 @@ static int i3c_emul_target_controller_handoff(const struct device *dev, bool acc
 	struct i3c_emul_data *data = dev->data;
 
 	/*
-	 * "Accept" here means: when the active controller offers controller
-	 * role to this device (via GETACCCR), the application is willing
-	 * to take it. is_secondary is the boot-time role (Primary vs
-	 * Secondary controller) and stays as initialized; it is NOT a
-	 * "currently active" flag.
+	 * Per i3c_dw.c / i3c_cdns.c, controller_handoff_cb fires only when
+	 * the wire-level handoff actually completes (a hardware IRQ telling
+	 * us we now own the bus), not when the application opts in. This
+	 * call is just the application announcing whether it would accept
+	 * a future handoff offer. Stash the preference; the bus emulator
+	 * fires the callback and flips target_config.enabled when it
+	 * dispatches a GETACCCR direct CCC to this device's address.
 	 */
 	data->handoff_accept = accept;
-
-	if (accept && data->target_cfg != NULL &&
-	    data->target_cfg->callbacks != NULL &&
-	    data->target_cfg->callbacks->controller_handoff_cb != NULL) {
-		(void)data->target_cfg->callbacks->controller_handoff_cb(data->target_cfg);
-	}
-
 	return 0;
 }
 #endif /* CONFIG_I3C_TARGET */
