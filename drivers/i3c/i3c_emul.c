@@ -311,11 +311,14 @@ static void i3c_emul_post_ccc_update(struct i3c_ccc_payload *payload,
 		if (tp->data == NULL || tp->data_len < 1U) {
 			return;
 		}
+		/*
+		 * Bus-side mirror update only. The peripheral mutates its
+		 * own dyn_addr from inside its do_ccc handler — the wire
+		 * CCC reaches it directly, so it doesn't need a side-channel
+		 * callback for SETDASA / SETNEWDA / RSTDAA.
+		 */
 		new_addr = tp->data[0] >> 1;
 		emul->dynamic_addr = new_addr;
-		if (emul->api->set_dynamic_addr != NULL) {
-			(void)emul->api->set_dynamic_addr(emul->target, new_addr);
-		}
 		break;
 	default:
 		break;
@@ -343,9 +346,11 @@ static int i3c_emul_do_ccc_broadcast(const struct device *dev, struct i3c_ccc_pa
 
 	if (payload->ccc.id == I3C_CCC_RSTDAA) {
 		/*
-		 * Per-target peripheral mirror cleanup. Controller-side state
+		 * Bus-side per-emul mirror cleanup. Controller-side state
 		 * (desc->dynamic_addr, address-slot map) is reset by
-		 * i3c_bus_rstdaa_all() in drivers/i3c/i3c_common.c.
+		 * i3c_bus_rstdaa_all() in drivers/i3c/i3c_common.c. Each
+		 * peripheral wipes its own dyn_addr from inside its do_ccc
+		 * handler — RSTDAA reached it via the broadcast walk above.
 		 */
 		I3C_BUS_FOR_EACH_I3CDEV(dev, desc) {
 			struct i3c_emul *emul = i3c_emul_for_desc(desc);
@@ -358,9 +363,6 @@ static int i3c_emul_do_ccc_broadcast(const struct device *dev, struct i3c_ccc_pa
 #ifdef CONFIG_I3C_USE_IBI
 			emul->ibi_enabled = false;
 #endif
-			if (emul->api != NULL && emul->api->set_dynamic_addr != NULL) {
-				(void)emul->api->set_dynamic_addr(emul->target, 0U);
-			}
 		}
 	}
 

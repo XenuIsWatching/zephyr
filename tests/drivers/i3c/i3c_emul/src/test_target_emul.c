@@ -97,8 +97,20 @@ static int test_target_do_ccc(const struct emul *target, struct i3c_ccc_payload 
 	struct i3c_ccc_target_payload *tp = NULL;
 
 	if (!is_broadcast) {
+		uint8_t my_static = target->bus.i3c->static_addr;
+
 		for (size_t i = 0; i < payload->targets.num_targets; i++) {
-			if (payload->targets.payloads[i].addr == data->dyn_addr) {
+			uint8_t addr = payload->targets.payloads[i].addr;
+
+			/*
+			 * SETDASA addresses the peripheral by its static_addr
+			 * (it has no dynamic_addr yet). Every other direct CCC
+			 * uses the dynamic_addr. Match on either so the
+			 * peripheral can intercept all of its own direct CCCs
+			 * without having to know which lookup mode the bus
+			 * emulator used.
+			 */
+			if (addr == data->dyn_addr || (my_static != 0U && addr == my_static)) {
 				tp = &payload->targets.payloads[i];
 				break;
 			}
@@ -206,10 +218,20 @@ static int test_target_do_ccc(const struct emul *target, struct i3c_ccc_payload 
 		}
 		return 0;
 
-	/* --- DAA-related: ack, bus emulator handles state. --- */
+	/*
+	 * Wire-level address-mutating CCCs: the peripheral updates its
+	 * own dyn_addr from the wire payload, the same way real silicon
+	 * would. The bus emulator separately keeps its per-emul mirror
+	 * in sync for its CCC-dispatch lookup helper.
+	 */
 	case I3C_CCC_SETDASA:
 	case I3C_CCC_SETNEWDA:
+		if (tp != NULL && tp->data != NULL && tp->data_len >= 1U) {
+			data->dyn_addr = tp->data[0] >> 1;
+		}
+		return 0;
 	case I3C_CCC_RSTDAA:
+		data->dyn_addr = 0;
 		return 0;
 	default:
 		return -ENOTSUP;
