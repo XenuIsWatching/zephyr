@@ -406,12 +406,22 @@ static int i3c_emul_do_ccc_broadcast(const struct device *dev, struct i3c_ccc_pa
 	 * IRQ: deep-copy the payload into data->common.deftgts and arm
 	 * deftgts_refreshed, so a subsequent controller-handoff completion
 	 * can let i3c_sec_handoffed walk it.
+	 *
+	 * Per spec, the wire DEFTGTS payload (which payload->ccc.data is
+	 * verbatim from i3c_ccc_do_deftgts_all) carries each address in
+	 * the upper 7 bits of an 8-bit field. Real hardware SDCT registers
+	 * de-shift on the way in, and dw / cdns / npcx all store the
+	 * 7-bit form into data->common.deftgts. i3c_sec_handoffed assumes
+	 * that 7-bit form. The emulator has no hardware to de-shift for
+	 * us, so do it here when we mirror the payload.
 	 */
 	if (payload->ccc.id == I3C_CCC_DEFTGTS) {
 		struct i3c_emul_data *data = dev->data;
 
 		if (data->target_cfg != NULL && payload->ccc.data != NULL &&
 		    payload->ccc.data_len > 0U) {
+			struct i3c_ccc_deftgts *defs;
+
 			if (data->common.deftgts != NULL) {
 				k_free(data->common.deftgts);
 			}
@@ -419,6 +429,13 @@ static int i3c_emul_do_ccc_broadcast(const struct device *dev, struct i3c_ccc_pa
 			if (data->common.deftgts != NULL) {
 				memcpy(data->common.deftgts, payload->ccc.data,
 				       payload->ccc.data_len);
+				defs = data->common.deftgts;
+				defs->active_controller.addr >>= 1;
+				defs->active_controller.static_addr >>= 1;
+				for (uint8_t i = 0; i < defs->count; i++) {
+					defs->targets[i].addr >>= 1;
+					defs->targets[i].static_addr >>= 1;
+				}
 				data->common.deftgts_refreshed = true;
 			} else {
 				LOG_ERR("%s: DEFTGTS k_malloc(%zu) failed", dev->name,

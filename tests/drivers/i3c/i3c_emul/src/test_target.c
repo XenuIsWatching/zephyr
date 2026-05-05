@@ -330,35 +330,79 @@ ZTEST(i3c_emul_target, test_controller_handoff_to_peripheral_via_getacccr)
 
 ZTEST(i3c_emul_target, test_handoff_completes_and_sec_handoffed_repopulates_bus)
 {
-	/*
-	 * End-to-end loop: as the active controller, broadcast DEFTGTS,
-	 * initiate handoff via GETACCCR-to-target_cfg, drain the IBI
-	 * workqueue so i3c_sec_handoffed runs, then assert the bus list
-	 * is repopulated from DEFTGTS under the now-active controller.
-	 *
-	 * The bus emulator side of this is wired up:
-	 *   - DEFTGTS broadcast deep-copies the payload into
-	 *     data->common.deftgts and arms deftgts_refreshed.
-	 *   - GETACCCR-to-target_cfg ACK enqueues
-	 *     i3c_ibi_work_enqueue_cb(dev, i3c_sec_handoffed) when
-	 *     CONFIG_I3C_IBI_WORKQUEUE is set.
-	 *   - attach_i3c_device PID-links any new desc to its peripheral,
-	 *     and find_by_addr's wire-level dynamic_addr fallback handles
-	 *     the temp_desc GETPID round-trip i3c_sec_get_basic_info uses.
-	 *
-	 * TODO: this loop currently exposes an upstream inconsistency in
-	 * drivers/i3c/i3c_common.c — i3c_bus_deftgts writes
-	 * deftgts->active_controller.addr left-shifted by 1, while
-	 * dw/cdns receivers populate it unshifted from their SDCT
-	 * registers. i3c_sec_handoffed treats the field as unshifted, so
-	 * looping through the emulator's same i3c_bus_deftgts produces a
-	 * shifted active-controller addr that i3c_sec_get_basic_info then
-	 * mis-attaches. Skipping this end-to-end test until that
-	 * inconsistency is resolved upstream; the driver-side plumbing
-	 * is in place and verified by the inputs (DEFTGTS-reaches and
-	 * handoff-completes tests above).
-	 */
+#if !defined(CONFIG_I3C_USE_IBI) || !defined(CONFIG_I3C_IBI_WORKQUEUE)
 	ztest_test_skip();
+#else
+	struct i3c_target_config tcfg_at_a = {
+		.address = 0,
+		.callbacks = &tcb,
+	};
+	struct i3c_device_desc *desc_a;
+	struct i3c_device_desc *desc;
+	int n_attached;
+	int rc;
+
+	/*
+	 * End-to-end secondary-controller handoff:
+	 *  1. As the active controller, broadcast DEFTGTS — peripherals
+	 *     receive it AND the bus emulator stores a (de-shifted) deep
+	 *     copy in data->common.deftgts because a target_cfg is
+	 *     registered.
+	 *  2. Active controller initiates handoff via GETACCCR direct CCC
+	 *     at the registered target_cfg's address.
+	 *  3. Bus emulator's GETACCCR-to-target_cfg interception replies
+	 *     parity-correctly, fires controller_handoff_cb, flips
+	 *     target_config.enabled = false, and enqueues
+	 *     i3c_sec_handoffed on the IBI workqueue.
+	 *  4. i3c_sec_handoffed runs: i3c_sec_bus_reset detaches all descs,
+	 *     then for each entry in data->common.deftgts it calls
+	 *     i3c_sec_get_basic_info, which attaches a temp_desc and
+	 *     issues GETPID. The bus emulator's wire-level dynamic-address
+	 *     fallback finds the peripheral, GETPID returns the right PID,
+	 *     the framework looks up the static desc by PID and re-attaches
+	 *     it, and this driver's PID-keyed attach hook re-links
+	 *     desc->controller_priv.
+	 *
+	 * After the workqueue drains, every desc in DEFTGTS should be
+	 * re-attached and have controller_priv set, proving the device-now-
+	 * acting-as-active-controller can immediately drive the bus.
+	 */
+	desc_a = find_desc(TARGET_A_PID);
+	zassert_not_null(desc_a, "target A desc");
+	if (desc_a->dynamic_addr == 0U) {
+		rc = i3c_bus_setdasa(desc_a, desc_a->static_addr);
+		zassert_ok(rc, "SETDASA: %d", rc);
+	}
+
+	tcfg_at_a.address = desc_a->dynamic_addr;
+	rc = i3c_target_register(bus, &tcfg_at_a);
+	zassert_ok(rc, "target_register: %d", rc);
+
+	rc = i3c_target_controller_handoff(bus, true);
+	zassert_ok(rc, "handoff(true): %d", rc);
+
+	rc = i3c_bus_deftgts(bus);
+	zassert_ok(rc, "i3c_bus_deftgts: %d", rc);
+
+	rc = i3c_device_controller_handoff(desc_a, true);
+	zassert_ok(rc, "i3c_device_controller_handoff: %d", rc);
+
+	zassert_equal(atomic_get(&g.handoff), 1, "controller_handoff_cb fired");
+
+	/* Drain the IBI workqueue so i3c_sec_handoffed runs. */
+	k_sleep(K_MSEC(100));
+
+	n_attached = 0;
+	I3C_BUS_FOR_EACH_I3CDEV(bus, desc) {
+		n_attached++;
+		zassert_not_null((void *)desc->controller_priv,
+				 "desc 0x%02x relinked after handoff", desc->dynamic_addr);
+	}
+	zassert_true(n_attached >= 1,
+		     "expected at least one desc re-attached from DEFTGTS, got %d", n_attached);
+
+	(void)i3c_target_unregister(bus, &tcfg_at_a);
+#endif
 }
 
 ZTEST_SUITE(i3c_emul_target, NULL, target_setup, target_before, NULL, NULL);
