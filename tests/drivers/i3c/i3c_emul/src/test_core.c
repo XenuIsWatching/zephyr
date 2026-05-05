@@ -73,8 +73,8 @@ ZTEST(i3c_emul_core, test_xfers_routes_by_dynamic_addr)
 
 	rc = i3c_write(desc, write_buf, sizeof(write_buf));
 	zassert_ok(rc, "i3c_write failed: %d", rc);
-	zassert_equal(test_target_get_reg(target_a, 0), 0xAA, "reg[0] mismatch");
-	zassert_equal(test_target_get_reg(target_a, 1), 0xBB, "reg[1] mismatch");
+	zassert_equal(test_target_get_reg(target_a, 0), write_buf[1], "reg[0] mismatch");
+	zassert_equal(test_target_get_reg(target_a, 1), write_buf[2], "reg[1] mismatch");
 
 	uint8_t cursor = 0;
 
@@ -82,8 +82,8 @@ ZTEST(i3c_emul_core, test_xfers_routes_by_dynamic_addr)
 	zassert_ok(rc, "i3c_write seek failed: %d", rc);
 	rc = i3c_read(desc, read_buf, sizeof(read_buf));
 	zassert_ok(rc, "i3c_read failed: %d", rc);
-	zassert_equal(read_buf[0], 0xAA, "read[0] mismatch");
-	zassert_equal(read_buf[1], 0xBB, "read[1] mismatch");
+	zassert_equal(read_buf[0], write_buf[1], "read[0] mismatch");
+	zassert_equal(read_buf[1], write_buf[2], "read[1] mismatch");
 }
 
 ZTEST(i3c_emul_core, test_ccc_getpid_round_trip)

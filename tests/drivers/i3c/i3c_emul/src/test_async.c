@@ -78,8 +78,8 @@ ZTEST(i3c_emul_async, test_xfers_cb_fires_on_completion)
 	zassert_equal(g_cb.userdata, &marker, "userdata propagated");
 	zassert_equal(g_cb.dev, bus, "callback dev matches bus");
 
-	zassert_equal(test_target_get_reg(EMUL_DT_GET(TARGET_A), 0), 0xAB, "reg[0]");
-	zassert_equal(test_target_get_reg(EMUL_DT_GET(TARGET_A), 1), 0xCD, "reg[1]");
+	zassert_equal(test_target_get_reg(EMUL_DT_GET(TARGET_A), 0), buf[1], "reg[0]");
+	zassert_equal(test_target_get_reg(EMUL_DT_GET(TARGET_A), 1), buf[2], "reg[1]");
 }
 
 ZTEST(i3c_emul_async, test_do_ccc_cb_fires_on_completion)
@@ -132,8 +132,8 @@ ZTEST(i3c_emul_async, test_rtio_iodev_submit_round_trip)
 	zassert_ok(cqe->result, "cqe result: %d", cqe->result);
 	rtio_cqe_release(&rtio_ctx, cqe);
 
-	zassert_equal(test_target_get_reg(EMUL_DT_GET(TARGET_A), 0), 0x55, "reg[0]");
-	zassert_equal(test_target_get_reg(EMUL_DT_GET(TARGET_A), 1), 0x66, "reg[1]");
+	zassert_equal(test_target_get_reg(EMUL_DT_GET(TARGET_A), 0), write_buf[1], "reg[0]");
+	zassert_equal(test_target_get_reg(EMUL_DT_GET(TARGET_A), 1), write_buf[2], "reg[1]");
 }
 #endif /* CONFIG_I3C_RTIO */
 
