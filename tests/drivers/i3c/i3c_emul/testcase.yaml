@@ -1,0 +1,8 @@
+tests:
+  drivers.i3c.emul:
+    platform_allow:
+      - native_sim
+    tags:
+      - drivers
+      - i3c
+      - emul

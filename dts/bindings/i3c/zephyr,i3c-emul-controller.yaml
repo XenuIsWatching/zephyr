@@ -1,0 +1,12 @@
+# Copyright (c) 2026 Ryan McClelland
+# SPDX-License-Identifier: Apache-2.0
+
+description: Zephyr I3C Emulation controller
+
+compatible: "zephyr,i3c-emul-controller"
+
+include: i3c-controller.yaml
+
+properties:
+  reg:
+    required: true

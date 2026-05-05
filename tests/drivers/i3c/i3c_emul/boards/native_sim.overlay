@@ -1,0 +1,32 @@
+/*
+ * Copyright (c) 2026 Ryan McClelland
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/ {
+	i3c0: i3c@600 {
+		status = "okay";
+		compatible = "zephyr,i3c-emul-controller";
+		reg = <0x600 4>;
+		#address-cells = <3>;
+		#size-cells = <0>;
+		i3c-scl-hz = <12500000>;
+		i2c-scl-hz = <400000>;
+		disable-hj-at-init;
+
+		test_target_a: target_a@5500001234012345678 {
+			compatible = "zephyr,i3c-emul-test-target";
+			reg = <0x55 0x1234 0x12345678>;
+			bcr = <0x00>;
+			dcr = <0x6c>;
+		};
+
+		test_target_b: target_b@5678abcdef012 {
+			compatible = "zephyr,i3c-emul-test-target";
+			reg = <0x00 0x5678 0xABCDEF01>;
+			assigned-address = <0x42>;
+			bcr = <0x00>;
+			dcr = <0x6c>;
+		};
+	};
+};

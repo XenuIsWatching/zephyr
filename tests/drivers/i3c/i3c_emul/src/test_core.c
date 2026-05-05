@@ -1,0 +1,146 @@
+/*
+ * Copyright (c) 2026 Ryan McClelland
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * M2 core tests for the I3C emulator: attach, DAA, private xfers, CCCs, and
+ * the mock_api fault-injection slot.
+ */
+
+#include <zephyr/devicetree.h>
+#include <zephyr/drivers/emul.h>
+#include <zephyr/drivers/i3c.h>
+#include <zephyr/drivers/i3c/ccc.h>
+#include <zephyr/drivers/i3c_emul.h>
+#include <zephyr/kernel.h>
+#include <zephyr/sys/byteorder.h>
+#include <zephyr/ztest.h>
+
+#include "test_target_emul.h"
+
+#define I3C_BUS DT_NODELABEL(i3c0)
+#define TARGET_A DT_NODELABEL(test_target_a)
+#define TARGET_B DT_NODELABEL(test_target_b)
+
+#define TARGET_A_PID  ((uint64_t)0x1234 << 32 | 0x12345678)
+#define TARGET_B_PID  ((uint64_t)0x5678 << 32 | 0xABCDEF01)
+#define TARGET_B_INIT_DA 0x42
+
+static const struct device *bus = DEVICE_DT_GET(I3C_BUS);
+static const struct emul *target_a = EMUL_DT_GET(TARGET_A);
+static const struct emul *target_b = EMUL_DT_GET(TARGET_B);
+
+static struct i3c_device_desc *find_desc(uint64_t pid)
+{
+	struct i3c_device_id id = I3C_DEVICE_ID(pid);
+
+	return i3c_device_find(bus, &id);
+}
+
+ZTEST(i3c_emul_core, test_attach_and_setdasa_static_to_dynamic)
+{
+	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
+
+	zassert_not_null(desc, "device desc for target A must exist");
+	zassert_equal(desc->static_addr, 0x55, "static addr expected 0x55");
+	zassert_equal(desc->dynamic_addr, 0x55,
+		      "i3c_bus_init should have promoted static addr to dynamic via SETDASA");
+	zassert_equal(test_target_get_dynamic_addr(target_a), 0x55,
+		      "peripheral should know its dynamic addr");
+}
+
+ZTEST(i3c_emul_core, test_do_daa_respects_init_dynamic_addr)
+{
+	struct i3c_device_desc *desc = find_desc(TARGET_B_PID);
+
+	zassert_not_null(desc, "device desc for target B must exist");
+	zassert_equal(desc->static_addr, 0x00, "target B has no static addr");
+	zassert_equal(desc->dynamic_addr, TARGET_B_INIT_DA,
+		      "DAA should honour assigned-address property");
+	zassert_equal(test_target_get_dynamic_addr(target_b), TARGET_B_INIT_DA,
+		      "peripheral mirror should match");
+}
+
+ZTEST(i3c_emul_core, test_xfers_routes_by_dynamic_addr)
+{
+	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
+	uint8_t write_buf[3] = {0x00, 0xAA, 0xBB};
+	uint8_t read_buf[2] = {0};
+	int rc;
+
+	zassert_not_null(desc, "desc");
+
+	rc = i3c_write(desc, write_buf, sizeof(write_buf));
+	zassert_ok(rc, "i3c_write failed: %d", rc);
+	zassert_equal(test_target_get_reg(target_a, 0), 0xAA, "reg[0] mismatch");
+	zassert_equal(test_target_get_reg(target_a, 1), 0xBB, "reg[1] mismatch");
+
+	uint8_t cursor = 0;
+
+	rc = i3c_write(desc, &cursor, sizeof(cursor));
+	zassert_ok(rc, "i3c_write seek failed: %d", rc);
+	rc = i3c_read(desc, read_buf, sizeof(read_buf));
+	zassert_ok(rc, "i3c_read failed: %d", rc);
+	zassert_equal(read_buf[0], 0xAA, "read[0] mismatch");
+	zassert_equal(read_buf[1], 0xBB, "read[1] mismatch");
+}
+
+ZTEST(i3c_emul_core, test_ccc_getpid_round_trip)
+{
+	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
+	struct i3c_ccc_getpid resp = {0};
+	int rc;
+
+	zassert_not_null(desc, "desc");
+
+	rc = i3c_ccc_do_getpid(desc, &resp);
+	zassert_ok(rc, "GETPID failed: %d", rc);
+	zassert_equal(sys_get_be48(resp.pid), TARGET_A_PID, "PID round-trip mismatch");
+}
+
+static int mock_xfers_eio(const struct emul *target, struct i3c_msg *msgs, uint8_t num_msgs)
+{
+	ARG_UNUSED(target);
+	ARG_UNUSED(msgs);
+	ARG_UNUSED(num_msgs);
+	return -EIO;
+}
+
+ZTEST(i3c_emul_core, test_mock_api_returns_eio)
+{
+	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
+	static struct i3c_emul_api mock = {
+		.xfers = mock_xfers_eio,
+	};
+	uint8_t buf[1] = {0};
+	int rc;
+
+	test_target_install_mock(target_a, &mock);
+
+	rc = i3c_write(desc, buf, sizeof(buf));
+	zassert_equal(rc, -EIO, "expected mock to return -EIO, got %d", rc);
+
+	test_target_install_mock(target_a, NULL);
+}
+
+static void *i3c_emul_setup(void)
+{
+	struct i3c_device_desc *desc_a = find_desc(TARGET_A_PID);
+	struct i3c_device_desc *desc_b = find_desc(TARGET_B_PID);
+	int rc;
+
+	zassert_not_null(desc_a, "test setup: target A desc");
+	zassert_not_null(desc_b, "test setup: target B desc");
+
+	if (desc_a->dynamic_addr == 0U) {
+		rc = i3c_bus_setdasa(desc_a, desc_a->static_addr);
+		zassert_ok(rc, "SETDASA on target A failed: %d", rc);
+	}
+	if (desc_b->dynamic_addr == 0U) {
+		rc = i3c_do_daa(bus);
+		zassert_ok(rc, "DAA failed: %d", rc);
+	}
+	return NULL;
+}
+
+ZTEST_SUITE(i3c_emul_core, NULL, i3c_emul_setup, NULL, NULL, NULL);

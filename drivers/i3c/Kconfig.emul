@@ -1,0 +1,12 @@
+# Copyright (c) 2026 Ryan McClelland
+# SPDX-License-Identifier: Apache-2.0
+
+config I3C_EMUL
+	bool "I3C emulator"
+	default y
+	depends on DT_HAS_ZEPHYR_I3C_EMUL_CONTROLLER_ENABLED
+	depends on EMUL
+	help
+	  Fake I3C bus controller that dispatches to peripheral emulators
+	  registered via EMUL_DT_DEFINE. Used for testing I3C drivers and
+	  higher-level subsystems on native_sim without real hardware.

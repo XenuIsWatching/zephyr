@@ -121,8 +121,8 @@ struct emul {
 
 /* Conditionally places text based on what bus _dev_node_id is on. */
 #define Z_EMUL_BUS(_dev_node_id, _i2c, _i3c, _espi, _spi, _mspi, _uart, _none)                     \
-	COND_CASE_1(DT_ON_BUS(_dev_node_id, i2c), (_i2c),                                          \
-		    DT_ON_BUS(_dev_node_id, i3c), (_i3c),                                          \
+	COND_CASE_1(DT_ON_BUS(_dev_node_id, i3c), (_i3c),                                          \
+		    DT_ON_BUS(_dev_node_id, i2c), (_i2c),                                          \
 		    DT_ON_BUS(_dev_node_id, espi), (_espi),                                        \
 		    DT_ON_BUS(_dev_node_id, spi), (_spi),                                          \
 		    DT_ON_BUS(_dev_node_id, mspi), (_mspi),                                        \
@@ -150,7 +150,12 @@ struct emul {
 		.api = bus_api,                                                                    \
 		IF_ENABLED(DT_NODE_HAS_PROP(node_id, reg),                                         \
 			   (.Z_EMUL_BUS(node_id, addr, static_addr, chipsel, chipsel, dev_idx,     \
-					dummy, addr) = DT_REG_ADDR(node_id),))};                   \
+					dummy, addr) =                                             \
+				    Z_EMUL_BUS(node_id, DT_REG_ADDR(node_id),                      \
+					       DT_PROP_BY_IDX(node_id, reg, 0),                    \
+					       DT_REG_ADDR(node_id), DT_REG_ADDR(node_id),         \
+					       DT_REG_ADDR(node_id), DT_REG_ADDR(node_id),         \
+					       DT_REG_ADDR(node_id)),))};                          \
 	const STRUCT_SECTION_ITERABLE(emul, EMUL_DT_NAME_GET(node_id)) __used = {                  \
 		.init = (init_fn),                                                                 \
 		.dev = DEVICE_DT_GET(node_id),                                                     \
@@ -210,6 +215,20 @@ struct emul {
  * @return negative value on error
  */
 int emul_init_for_bus(const struct device *dev);
+
+/**
+ * @brief Set up a list of emulators using an explicit list pointer.
+ *
+ * Variant of @ref emul_init_for_bus for buses whose @c dev->config does not
+ * begin with a @ref emul_list_for_bus (e.g. I3C controllers, where the
+ * controller-driver-specific config block must come first).
+ *
+ * @param dev Device the emulators are attached to.
+ * @param cfg Pointer to the @ref emul_list_for_bus to walk.
+ * @return 0 if OK
+ * @return negative value on error
+ */
+int emul_init_for_bus_from_list(const struct device *dev, const struct emul_list_for_bus *cfg);
 
 /**
  * @brief Retrieve the emul structure for an emulator by name
