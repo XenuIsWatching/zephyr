@@ -56,6 +56,14 @@ struct i3c_emul {
 	struct i3c_emul_api *mock_api;
 
 	/**
+	 * Bus emulator controller device this peripheral is attached to.
+	 * Populated by @ref i3c_emul_register so that the peripheral side
+	 * (e.g. @ref i3c_emul_target_raise_ibi) can locate the bus without
+	 * external state.
+	 */
+	const struct device *bus;
+
+	/**
 	 * Static address from devicetree (first cell of @c reg). May be 0 when
 	 * the device only obtains an address through DAA.
 	 */
@@ -75,6 +83,14 @@ struct i3c_emul {
 
 	/** Device Characteristic Register. */
 	uint8_t dcr;
+
+	/**
+	 * IBI ACK state, managed by the bus emulator.  Set when the controller
+	 * calls @c ibi_enable for this target, cleared by @c ibi_disable or
+	 * RSTDAA.  When @c false, IBIs raised via
+	 * @ref i3c_emul_target_raise_ibi are NACKed.
+	 */
+	bool ibi_enabled;
 };
 
 /**

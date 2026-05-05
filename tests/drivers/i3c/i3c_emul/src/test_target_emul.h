@@ -16,11 +16,19 @@ struct test_target_backend_api {
 	void (*set_reg)(const struct emul *target, uint8_t idx, uint8_t value);
 	uint8_t (*get_dynamic_addr)(const struct emul *target);
 	void (*install_mock)(const struct emul *target, struct i3c_emul_api *mock);
+	int (*trigger_ibi)(const struct emul *target, uint8_t *payload, uint8_t len);
+	int (*trigger_hj)(const struct emul *target);
+	int (*trigger_crr)(const struct emul *target);
+	bool (*ibi_was_enabled)(const struct emul *target);
 };
 
 uint8_t test_target_get_reg(const struct emul *target, uint8_t idx);
 void test_target_set_reg(const struct emul *target, uint8_t idx, uint8_t value);
 uint8_t test_target_get_dynamic_addr(const struct emul *target);
 void test_target_install_mock(const struct emul *target, struct i3c_emul_api *mock);
+int test_target_trigger_ibi(const struct emul *target, uint8_t *payload, uint8_t len);
+int test_target_trigger_hj(const struct emul *target);
+int test_target_trigger_crr(const struct emul *target);
+bool test_target_ibi_was_enabled(const struct emul *target);
 
 #endif /* TEST_DRIVERS_I3C_I3C_EMUL_TEST_TARGET_EMUL_H_ */

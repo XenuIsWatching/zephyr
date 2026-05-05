@@ -21,6 +21,7 @@ LOG_MODULE_REGISTER(i3c_emul_ctlr);
 #include <zephyr/drivers/i3c.h>
 #include <zephyr/drivers/i3c/addresses.h>
 #include <zephyr/drivers/i3c/ccc.h>
+#include <zephyr/drivers/i3c/ibi.h>
 #include <zephyr/drivers/i3c_emul.h>
 #include <zephyr/sys/slist.h>
 
@@ -30,6 +31,10 @@ struct i3c_emul_data {
 	struct i3c_driver_data common;
 	sys_slist_t emuls;
 	sys_slist_t i2c_emuls;
+#ifdef CONFIG_I3C_USE_IBI
+	bool ibi_hj_ack;
+	bool ibi_crr_ack;
+#endif
 };
 
 struct i3c_emul_config {
@@ -347,6 +352,9 @@ static int i3c_emul_do_ccc_broadcast(const struct device *dev, struct i3c_ccc_pa
 		}
 		SYS_SLIST_FOR_EACH_CONTAINER_SAFE(&data->emuls, emul, emul_safe, node) {
 			emul->dynamic_addr = 0U;
+#ifdef CONFIG_I3C_USE_IBI
+			emul->ibi_enabled = false;
+#endif
 			if (emul->api != NULL && emul->api->set_dynamic_addr != NULL) {
 				(void)emul->api->set_dynamic_addr(emul->target, 0U);
 			}
@@ -438,6 +446,73 @@ static struct i3c_device_desc *i3c_emul_device_find(const struct device *dev,
 	return i3c_dev_list_find(&cfg->common.dev_list, id);
 }
 
+#ifdef CONFIG_I3C_USE_IBI
+static int i3c_emul_ibi_enable(const struct device *dev, struct i3c_device_desc *target)
+{
+	struct i3c_emul *emul;
+
+	if (target == NULL) {
+		return -EINVAL;
+	}
+
+	emul = i3c_emul_find_by_addr(dev, target->dynamic_addr, false);
+	if (emul == NULL) {
+		return -ENODEV;
+	}
+
+	emul->ibi_enabled = true;
+
+	if (emul->api != NULL && emul->api->ibi_enable != NULL) {
+		return emul->api->ibi_enable(emul->target);
+	}
+
+	return 0;
+}
+
+static int i3c_emul_ibi_disable(const struct device *dev, struct i3c_device_desc *target)
+{
+	struct i3c_emul *emul;
+
+	if (target == NULL) {
+		return -EINVAL;
+	}
+
+	emul = i3c_emul_find_by_addr(dev, target->dynamic_addr, false);
+	if (emul == NULL) {
+		return -ENODEV;
+	}
+
+	emul->ibi_enabled = false;
+
+	if (emul->api != NULL && emul->api->ibi_disable != NULL) {
+		return emul->api->ibi_disable(emul->target);
+	}
+
+	return 0;
+}
+
+static int i3c_emul_ibi_hj_response(const struct device *dev, bool ack)
+{
+	struct i3c_emul_data *data = dev->data;
+
+	data->ibi_hj_ack = ack;
+	return 0;
+}
+
+static int i3c_emul_ibi_crr_response(struct i3c_device_desc *target, bool ack)
+{
+	struct i3c_emul_data *data;
+
+	if (target == NULL || target->bus == NULL) {
+		return -EINVAL;
+	}
+
+	data = target->bus->data;
+	data->ibi_crr_ack = ack;
+	return 0;
+}
+#endif /* CONFIG_I3C_USE_IBI */
+
 static int i3c_emul_i2c_api_configure(const struct device *dev, uint32_t dev_config)
 {
 	ARG_UNUSED(dev);
@@ -459,6 +534,7 @@ int i3c_emul_register(const struct device *dev, struct i3c_emul *emul)
 {
 	struct i3c_emul_data *data = dev->data;
 
+	emul->bus = dev;
 	sys_slist_append(&data->emuls, &emul->node);
 	LOG_INF("%s: register I3C emul '%s' (sa=0x%02x, pid=0x%012llx)", dev->name,
 		emul->target->dev->name, emul->static_addr, (unsigned long long)emul->pid);
@@ -479,22 +555,121 @@ int i3c_emul_i2c_register(const struct device *dev, struct i3c_i2c_emul *emul)
 
 int i3c_emul_target_raise_ibi(const struct emul *target, uint8_t *payload, uint8_t payload_len)
 {
+#ifdef CONFIG_I3C_USE_IBI
+	const struct device *bus;
+	struct i3c_emul *emul;
+	struct i3c_device_desc *desc;
+
+	if (target == NULL || target->bus_type != EMUL_BUS_TYPE_I3C) {
+		return -EINVAL;
+	}
+
+	emul = target->bus.i3c;
+	if (emul == NULL || emul->bus == NULL || emul->dynamic_addr == 0U) {
+		return -EINVAL;
+	}
+
+	if (!emul->ibi_enabled) {
+		return -ENOTCONN;
+	}
+
+	bus = emul->bus;
+	desc = i3c_dev_list_i3c_addr_find(bus, emul->dynamic_addr);
+	if (desc == NULL || desc->ibi_cb == NULL) {
+		return -EINVAL;
+	}
+
+#ifdef CONFIG_I3C_IBI_WORKQUEUE
+	return i3c_ibi_work_enqueue_target_irq(desc, payload, payload_len);
+#else
+	{
+		struct i3c_ibi_payload ibi_payload = {0};
+
+		if (payload_len > sizeof(ibi_payload.payload)) {
+			payload_len = sizeof(ibi_payload.payload);
+		}
+		if ((payload != NULL) && (payload_len > 0U)) {
+			(void)memcpy(ibi_payload.payload, payload, payload_len);
+		}
+		ibi_payload.payload_len = payload_len;
+
+		return desc->ibi_cb(desc, payload_len > 0U ? &ibi_payload : NULL);
+	}
+#endif /* CONFIG_I3C_IBI_WORKQUEUE */
+#else
 	ARG_UNUSED(target);
 	ARG_UNUSED(payload);
 	ARG_UNUSED(payload_len);
 	return -ENOSYS;
+#endif /* CONFIG_I3C_USE_IBI */
 }
 
 int i3c_emul_target_raise_hj(const struct emul *target)
 {
+#ifdef CONFIG_I3C_USE_IBI
+	struct i3c_emul *emul;
+	struct i3c_emul_data *data;
+
+	if (target == NULL || target->bus_type != EMUL_BUS_TYPE_I3C) {
+		return -EINVAL;
+	}
+
+	emul = target->bus.i3c;
+	if (emul == NULL || emul->bus == NULL) {
+		return -EINVAL;
+	}
+
+	data = emul->bus->data;
+	if (!data->ibi_hj_ack) {
+		return -ENOTCONN;
+	}
+
+#ifdef CONFIG_I3C_IBI_WORKQUEUE
+	return i3c_ibi_work_enqueue_hotjoin(emul->bus);
+#else
+	return 0;
+#endif
+#else
 	ARG_UNUSED(target);
 	return -ENOSYS;
+#endif
 }
 
 int i3c_emul_target_raise_crr(const struct emul *target)
 {
+#ifdef CONFIG_I3C_USE_IBI
+	struct i3c_emul_data *data;
+	struct i3c_emul *emul;
+	struct i3c_device_desc *desc;
+
+	if (target == NULL || target->bus_type != EMUL_BUS_TYPE_I3C) {
+		return -EINVAL;
+	}
+
+	emul = target->bus.i3c;
+	if (emul == NULL || emul->bus == NULL || emul->dynamic_addr == 0U) {
+		return -EINVAL;
+	}
+
+	data = emul->bus->data;
+	if (!data->ibi_crr_ack) {
+		return -ENOTCONN;
+	}
+
+	desc = i3c_dev_list_i3c_addr_find(emul->bus, emul->dynamic_addr);
+	if (desc == NULL) {
+		return -EINVAL;
+	}
+
+#ifdef CONFIG_I3C_IBI_WORKQUEUE
+	return i3c_ibi_work_enqueue_controller_request(desc);
+#else
+	return 0;
+#endif
+#else
 	ARG_UNUSED(target);
 	return -ENOSYS;
+#endif
 }
 
 static int i3c_emul_init(const struct device *dev)
@@ -547,6 +722,12 @@ static DEVICE_API(i3c, i3c_emul_api) = {
 	.do_ccc = i3c_emul_do_ccc,
 	.i3c_xfers = i3c_emul_xfers,
 	.i3c_device_find = i3c_emul_device_find,
+#ifdef CONFIG_I3C_USE_IBI
+	.ibi_enable = i3c_emul_ibi_enable,
+	.ibi_disable = i3c_emul_ibi_disable,
+	.ibi_hj_response = i3c_emul_ibi_hj_response,
+	.ibi_crr_response = i3c_emul_ibi_crr_response,
+#endif
 };
 
 #define EMUL_LINK_AND_COMMA(node_id)                                                               \

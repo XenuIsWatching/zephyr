@@ -33,6 +33,7 @@ struct test_target_data {
 	uint8_t regs[TEST_TARGET_REG_SIZE];
 	uint8_t cursor;
 	uint8_t dyn_addr;
+	bool ibi_enabled_seen;
 };
 
 static int test_target_xfers(const struct emul *target, struct i3c_msg *msgs, uint8_t num_msgs)
@@ -119,10 +120,26 @@ static int test_target_set_dynamic_addr(const struct emul *target, uint8_t dynam
 	return 0;
 }
 
+static int test_target_ibi_enable(const struct emul *target)
+{
+	struct test_target_data *data = target->data;
+
+	data->ibi_enabled_seen = true;
+	return 0;
+}
+
+static int test_target_ibi_disable(const struct emul *target)
+{
+	ARG_UNUSED(target);
+	return 0;
+}
+
 static const struct i3c_emul_api test_target_api = {
 	.xfers = test_target_xfers,
 	.do_ccc = test_target_do_ccc,
 	.set_dynamic_addr = test_target_set_dynamic_addr,
+	.ibi_enable = test_target_ibi_enable,
+	.ibi_disable = test_target_ibi_disable,
 };
 
 uint8_t test_target_get_reg(const struct emul *target, uint8_t idx)
@@ -151,11 +168,37 @@ void test_target_install_mock(const struct emul *target, struct i3c_emul_api *mo
 	target->bus.i3c->mock_api = mock;
 }
 
+int test_target_trigger_ibi(const struct emul *target, uint8_t *payload, uint8_t len)
+{
+	return i3c_emul_target_raise_ibi(target, payload, len);
+}
+
+int test_target_trigger_hj(const struct emul *target)
+{
+	return i3c_emul_target_raise_hj(target);
+}
+
+int test_target_trigger_crr(const struct emul *target)
+{
+	return i3c_emul_target_raise_crr(target);
+}
+
+bool test_target_ibi_was_enabled(const struct emul *target)
+{
+	struct test_target_data *data = target->data;
+
+	return data->ibi_enabled_seen;
+}
+
 static const struct test_target_backend_api test_target_backend = {
 	.get_reg = test_target_get_reg,
 	.set_reg = test_target_set_reg,
 	.get_dynamic_addr = test_target_get_dynamic_addr,
 	.install_mock = test_target_install_mock,
+	.trigger_ibi = test_target_trigger_ibi,
+	.trigger_hj = test_target_trigger_hj,
+	.trigger_crr = test_target_trigger_crr,
+	.ibi_was_enabled = test_target_ibi_was_enabled,
 };
 
 static int test_target_init(const struct emul *target, const struct device *parent)

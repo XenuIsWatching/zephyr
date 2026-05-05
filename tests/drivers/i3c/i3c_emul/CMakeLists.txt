@@ -9,4 +9,5 @@ target_sources(app PRIVATE
     src/test_core.c
     src/test_target_emul.c
 )
+target_sources_ifdef(CONFIG_I3C_USE_IBI app PRIVATE src/test_ibi.c)
 target_include_directories(app PRIVATE src)
