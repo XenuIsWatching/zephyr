@@ -399,6 +399,35 @@ static int i3c_emul_do_ccc_broadcast(const struct device *dev, struct i3c_ccc_pa
 		}
 	}
 
+#ifdef CONFIG_I3C_TARGET
+	/*
+	 * If a target_cfg is registered, mirror the wire-level "DEFTGTS
+	 * received as a target" path that real silicon exposes through an
+	 * IRQ: deep-copy the payload into data->common.deftgts and arm
+	 * deftgts_refreshed, so a subsequent controller-handoff completion
+	 * can let i3c_sec_handoffed walk it.
+	 */
+	if (payload->ccc.id == I3C_CCC_DEFTGTS) {
+		struct i3c_emul_data *data = dev->data;
+
+		if (data->target_cfg != NULL && payload->ccc.data != NULL &&
+		    payload->ccc.data_len > 0U) {
+			if (data->common.deftgts != NULL) {
+				k_free(data->common.deftgts);
+			}
+			data->common.deftgts = k_malloc(payload->ccc.data_len);
+			if (data->common.deftgts != NULL) {
+				memcpy(data->common.deftgts, payload->ccc.data,
+				       payload->ccc.data_len);
+				data->common.deftgts_refreshed = true;
+			} else {
+				LOG_ERR("%s: DEFTGTS k_malloc(%zu) failed", dev->name,
+					payload->ccc.data_len);
+			}
+		}
+	}
+#endif /* CONFIG_I3C_TARGET */
+
 	return ret;
 }
 
@@ -450,6 +479,19 @@ static int i3c_emul_do_ccc_direct(const struct device *dev, struct i3c_ccc_paylo
 					(void)data->target_cfg->callbacks
 						->controller_handoff_cb(data->target_cfg);
 				}
+
+#if defined(CONFIG_I3C_USE_IBI) && defined(CONFIG_I3C_IBI_WORKQUEUE)
+				/*
+				 * Mirror real drivers (i3c_dw.c, i3c_cdns.c):
+				 * after a completed handoff, schedule
+				 * i3c_sec_handoffed via the IBI workqueue. It
+				 * walks data->common.deftgts (populated when
+				 * the prior active controller broadcast
+				 * DEFTGTS) and re-attaches the bus topology
+				 * under this newly-active controller.
+				 */
+				(void)i3c_ibi_work_enqueue_cb(dev, i3c_sec_handoffed);
+#endif
 				continue;
 			}
 			/* Other direct CCCs to a registered-target address are

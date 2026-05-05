@@ -328,4 +328,37 @@ ZTEST(i3c_emul_target, test_controller_handoff_to_peripheral_via_getacccr)
 	zassert_ok(rc, "i3c_device_controller_handoff: %d", rc);
 }
 
+ZTEST(i3c_emul_target, test_handoff_completes_and_sec_handoffed_repopulates_bus)
+{
+	/*
+	 * End-to-end loop: as the active controller, broadcast DEFTGTS,
+	 * initiate handoff via GETACCCR-to-target_cfg, drain the IBI
+	 * workqueue so i3c_sec_handoffed runs, then assert the bus list
+	 * is repopulated from DEFTGTS under the now-active controller.
+	 *
+	 * The bus emulator side of this is wired up:
+	 *   - DEFTGTS broadcast deep-copies the payload into
+	 *     data->common.deftgts and arms deftgts_refreshed.
+	 *   - GETACCCR-to-target_cfg ACK enqueues
+	 *     i3c_ibi_work_enqueue_cb(dev, i3c_sec_handoffed) when
+	 *     CONFIG_I3C_IBI_WORKQUEUE is set.
+	 *   - attach_i3c_device PID-links any new desc to its peripheral,
+	 *     and find_by_addr's wire-level dynamic_addr fallback handles
+	 *     the temp_desc GETPID round-trip i3c_sec_get_basic_info uses.
+	 *
+	 * TODO: this loop currently exposes an upstream inconsistency in
+	 * drivers/i3c/i3c_common.c — i3c_bus_deftgts writes
+	 * deftgts->active_controller.addr left-shifted by 1, while
+	 * dw/cdns receivers populate it unshifted from their SDCT
+	 * registers. i3c_sec_handoffed treats the field as unshifted, so
+	 * looping through the emulator's same i3c_bus_deftgts produces a
+	 * shifted active-controller addr that i3c_sec_get_basic_info then
+	 * mis-attaches. Skipping this end-to-end test until that
+	 * inconsistency is resolved upstream; the driver-side plumbing
+	 * is in place and verified by the inputs (DEFTGTS-reaches and
+	 * handoff-completes tests above).
+	 */
+	ztest_test_skip();
+}
+
 ZTEST_SUITE(i3c_emul_target, NULL, target_setup, target_before, NULL, NULL);
