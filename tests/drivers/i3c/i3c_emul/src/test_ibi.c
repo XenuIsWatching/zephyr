@@ -125,24 +125,83 @@ ZTEST(i3c_emul_ibi, test_ibi_enabled_delivers_payload)
 
 ZTEST(i3c_emul_ibi, test_hj_nack)
 {
-	int rc = i3c_ibi_hj_response(bus, false);
+	struct i3c_device_desc *desc_a = find_desc(TARGET_A_PID);
+	int rc;
 
+	/*
+	 * HJ is only legal when the target has no dynamic address — RSTDAA
+	 * first to clear it, then assert the controller's NACK preference
+	 * blocks the HJ at the bus emulator (target_raise_hj returns
+	 * -ENOTCONN). Re-bring the address up after so subsequent tests
+	 * find the device.
+	 */
+	rc = i3c_bus_rstdaa_all(bus);
+	zassert_ok(rc, "rstdaa: %d", rc);
+
+	rc = i3c_ibi_hj_response(bus, false);
 	zassert_ok(rc, "hj_response false: %d", rc);
 
 	rc = test_target_trigger_hj(target_a);
 	zassert_equal(rc, -ENOTCONN, "expected -ENOTCONN when HJ NACKed, got %d", rc);
+	zassert_equal(test_target_get_dynamic_addr(target_a), 0,
+		      "NACKed HJ must not give the target a dynamic address");
+
+	rc = i3c_bus_setdasa(desc_a, desc_a->static_addr);
+	zassert_ok(rc, "restore SETDASA: %d", rc);
 }
 
 ZTEST(i3c_emul_ibi, test_hj_ack)
 {
-	int rc = i3c_ibi_hj_response(bus, true);
+	struct i3c_device_desc *desc_a = find_desc(TARGET_A_PID);
+	int rc;
 
+	/*
+	 * Spec model: a target with no dynamic address raises HJ; the
+	 * active controller has armed HJ ACK, so it ACKs and runs ENTDAA
+	 * (i3c_do_daa) from the IBI workqueue handler. After the workq
+	 * drains, the target should have a dynamic address.
+	 */
+	rc = i3c_bus_rstdaa_all(bus);
+	zassert_ok(rc, "rstdaa: %d", rc);
+	zassert_equal(test_target_get_dynamic_addr(target_a), 0,
+		      "precondition: target A should have no dynamic address");
+
+	rc = i3c_ibi_hj_response(bus, true);
 	zassert_ok(rc, "hj_response true: %d", rc);
 
 	rc = test_target_trigger_hj(target_a);
 	zassert_ok(rc, "trigger_hj after ACK: %d", rc);
 
+	zassert_true(WAIT_FOR(test_target_get_dynamic_addr(target_a) != 0,
+			      USEC_PER_MSEC * 100, k_msleep(1)),
+		     "ACKed HJ must trigger DAA and give the target a dynamic address");
+
 	(void)i3c_ibi_hj_response(bus, false);
+
+	/* Restore the static-DA mapping subsequent tests expect. */
+	if (desc_a->dynamic_addr != desc_a->static_addr) {
+		(void)i3c_bus_rstdaa_all(bus);
+		rc = i3c_bus_setdasa(desc_a, desc_a->static_addr);
+		zassert_ok(rc, "restore SETDASA: %d", rc);
+	}
+}
+
+ZTEST(i3c_emul_ibi, test_hj_rejected_when_target_has_da)
+{
+	int rc;
+
+	/*
+	 * Target A enters this test with a dynamic address from the suite
+	 * setup. Per spec, HJ is invalid for a device that already has a
+	 * DA — the bus emulator must reject it before any controller
+	 * preference is even consulted.
+	 */
+	zassert_not_equal(test_target_get_dynamic_addr(target_a), 0,
+			  "precondition: target A should have a dynamic address");
+
+	rc = test_target_trigger_hj(target_a);
+	zassert_equal(rc, -EACCES,
+		      "HJ from a target with a DA must be rejected, got %d", rc);
 }
 
 ZTEST(i3c_emul_ibi, test_crr_nack)

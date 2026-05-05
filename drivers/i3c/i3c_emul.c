@@ -961,6 +961,16 @@ int i3c_emul_target_raise_hj(const struct emul *target)
 		return -EINVAL;
 	}
 
+	/*
+	 * Hot-Join is only legal for devices that do not yet have a
+	 * dynamic address (the whole point of HJ is to ask the active
+	 * controller to run ENTDAA so this device gets one). A device
+	 * with a DA must not raise HJ.
+	 */
+	if (emul->dynamic_addr != 0U) {
+		return -EACCES;
+	}
+
 	data = emul->bus->data;
 	if (!data->ibi_hj_ack) {
 		return -ENOTCONN;
