@@ -60,10 +60,67 @@ static struct i3c_emul *i3c_emul_for_desc(const struct i3c_device_desc *desc)
 	return (struct i3c_emul *)desc->controller_priv;
 }
 
+/*
+ * PID is the constant identifier across DAA / SETDASA / SETNEWDA, so it
+ * is the only stable correlator between a controller-side desc and a
+ * peripheral. Walk every peripheral emul in the binary, find the one
+ * bound to this bus whose PID matches.
+ */
+static struct i3c_emul *i3c_emul_lookup_by_pid(const struct device *bus, uint64_t pid)
+{
+	if (pid == 0U) {
+		return NULL;
+	}
+	STRUCT_SECTION_FOREACH(emul, e) {
+		if (e->bus_type != EMUL_BUS_TYPE_I3C) {
+			continue;
+		}
+		if (e->bus.i3c == NULL || e->bus.i3c->bus != bus) {
+			continue;
+		}
+		if (e->bus.i3c->pid == pid) {
+			return e->bus.i3c;
+		}
+	}
+	return NULL;
+}
+
+/*
+ * Wire-level dynamic-address lookup. Used when a CCC arrives addressed
+ * at a dynamic address but the desc carrying the call has no PID linkage
+ * yet — concretely the temp_desc i3c_sec_get_basic_info attaches before
+ * issuing GETPID after a controller handoff.
+ */
+static struct i3c_emul *i3c_emul_lookup_by_dyn_addr(const struct device *bus, uint8_t addr)
+{
+	if (addr == 0U) {
+		return NULL;
+	}
+	STRUCT_SECTION_FOREACH(emul, e) {
+		if (e->bus_type != EMUL_BUS_TYPE_I3C) {
+			continue;
+		}
+		if (e->bus.i3c == NULL || e->bus.i3c->bus != bus) {
+			continue;
+		}
+		if (e->bus.i3c->dynamic_addr == addr) {
+			return e->bus.i3c;
+		}
+	}
+	return NULL;
+}
+
+static int i3c_emul_attach_i3c_device(const struct device *dev, struct i3c_device_desc *target)
+{
+	target->controller_priv = i3c_emul_lookup_by_pid(dev, target->pid);
+	return 0;
+}
+
 static struct i3c_emul *i3c_emul_find_by_addr(const struct device *dev, uint8_t addr,
 					      bool is_setdasa)
 {
 	struct i3c_device_desc *desc;
+	struct i3c_emul *emul;
 
 	if (addr == 0U) {
 		return NULL;
@@ -71,7 +128,21 @@ static struct i3c_emul *i3c_emul_find_by_addr(const struct device *dev, uint8_t 
 
 	desc = is_setdasa ? i3c_dev_list_i3c_static_addr_find(dev, addr)
 			  : i3c_dev_list_i3c_addr_find(dev, addr);
-	return i3c_emul_for_desc(desc);
+	emul = i3c_emul_for_desc(desc);
+	if (emul != NULL) {
+		return emul;
+	}
+
+	/*
+	 * The desc may exist but lack a PID-derived controller_priv link
+	 * (i3c_sec_get_basic_info attaches a temp_desc with bus + dyn_addr
+	 * before issuing GETPID). Fall back to a wire-level dynamic-address
+	 * lookup against peripheral emul state.
+	 */
+	if (!is_setdasa) {
+		return i3c_emul_lookup_by_dyn_addr(dev, addr);
+	}
+	return NULL;
 }
 
 static int i3c_emul_configure(const struct device *dev, enum i3c_config_type type, void *config)
@@ -734,22 +805,14 @@ static int i3c_emul_i2c_api_transfer(const struct device *dev, struct i2c_msg *m
 
 int i3c_emul_register(const struct device *dev, struct i3c_emul *emul)
 {
-	struct i3c_device_desc *desc;
-
 	emul->bus = dev;
 
 	/*
-	 * Link the peripheral emulator to the matching i3c_device_desc via
-	 * controller_priv so the bus emulator can dispatch using the standard
-	 * I3C_BUS_FOR_EACH_I3CDEV iteration without keeping its own list.
+	 * No desc->controller_priv linkup here — that happens in the
+	 * attach_i3c_device hook, which can run repeatedly (initial bus
+	 * init, secondary-controller handoff re-attach via i3c_sec_handoffed,
+	 * etc.) and re-derives the link from the PID stored in the desc.
 	 */
-	I3C_BUS_FOR_EACH_I3CDEV(dev, desc) {
-		if (desc->dev == emul->target->dev) {
-			desc->controller_priv = emul;
-			break;
-		}
-	}
-
 	LOG_INF("%s: register I3C emul '%s' (sa=0x%02x, pid=0x%012llx)", dev->name,
 		emul->target->dev->name, emul->static_addr, (unsigned long long)emul->pid);
 
@@ -902,17 +965,18 @@ static int i3c_emul_init(const struct device *dev)
 	data->common.ctrl_config.scl.i2c = cfg->i2c_scl_hz;
 
 	/*
-	 * Attach all DT-listed targets first so the standard I3C device list
-	 * is populated, then walk EMUL_DT_DEFINE peripherals so each
-	 * i3c_emul_register can link itself into the matching desc via
-	 * desc->controller_priv.
+	 * Register peripheral emuls first so they set their per-emul ->bus
+	 * pointer. Then run i3c_addr_slots_init: it calls
+	 * i3c_attach_i3c_device for each DT-listed desc, which invokes our
+	 * attach hook to PID-link desc->controller_priv to the matching
+	 * peripheral. Bus init can then dispatch CCCs through that link.
 	 */
-	ret = i3c_addr_slots_init(dev);
+	ret = emul_init_for_bus_from_list(dev, &cfg->emul_list);
 	if (ret != 0) {
 		return ret;
 	}
 
-	ret = emul_init_for_bus_from_list(dev, &cfg->emul_list);
+	ret = i3c_addr_slots_init(dev);
 	if (ret != 0) {
 		return ret;
 	}
@@ -936,6 +1000,7 @@ static DEVICE_API(i3c, i3c_emul_api) = {
 	.configure = i3c_emul_configure,
 	.config_get = i3c_emul_config_get,
 	.recover_bus = i3c_emul_recover_bus,
+	.attach_i3c_device = i3c_emul_attach_i3c_device,
 	.reattach_i3c_device = i3c_emul_reattach_i3c_device,
 	.detach_i3c_device = i3c_emul_detach_i3c_device,
 	.attach_i2c_device = i3c_emul_attach_i2c_device,
