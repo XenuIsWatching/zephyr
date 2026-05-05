@@ -22,6 +22,7 @@ LOG_MODULE_REGISTER(i3c_emul_ctlr);
 #include <zephyr/drivers/i3c/addresses.h>
 #include <zephyr/drivers/i3c/ccc.h>
 #include <zephyr/drivers/i3c/ibi.h>
+#include <zephyr/drivers/i3c/target_device.h>
 #include <zephyr/drivers/i3c_emul.h>
 
 #include <string.h>
@@ -31,6 +32,15 @@ struct i3c_emul_data {
 #ifdef CONFIG_I3C_USE_IBI
 	bool ibi_hj_ack;
 	bool ibi_crr_ack;
+#endif
+#ifdef CONFIG_I3C_TARGET
+	struct i3c_target_config *target_cfg;
+	bool handoff_accept;
+#if CONFIG_I3C_EMUL_TARGET_TX_FIFO_SIZE > 0
+	uint8_t tx_fifo[CONFIG_I3C_EMUL_TARGET_TX_FIFO_SIZE];
+	size_t tx_fifo_len;
+	uint8_t tx_fifo_hdr_mode;
+#endif
 #endif
 };
 
@@ -353,6 +363,73 @@ static int i3c_emul_do_ccc(const struct device *dev, struct i3c_ccc_payload *pay
 	return i3c_emul_do_ccc_direct(dev, payload);
 }
 
+#ifdef CONFIG_I3C_TARGET
+static int i3c_emul_target_xfer(struct i3c_emul_data *data, struct i3c_msg *msgs, uint8_t num_msgs)
+{
+	const struct i3c_target_callbacks *cb = data->target_cfg->callbacks;
+	int rc;
+
+	for (uint8_t i = 0; i < num_msgs; i++) {
+		struct i3c_msg *m = &msgs[i];
+
+		if ((m->flags & I3C_MSG_RW_MASK) == I3C_MSG_READ) {
+			uint32_t off = 0;
+
+#if CONFIG_I3C_EMUL_TARGET_TX_FIFO_SIZE > 0
+			if (data->tx_fifo_len > 0U) {
+				size_t take = MIN(data->tx_fifo_len, m->len);
+
+				memcpy(m->buf, data->tx_fifo, take);
+				if (take < data->tx_fifo_len) {
+					memmove(data->tx_fifo, &data->tx_fifo[take],
+						data->tx_fifo_len - take);
+				}
+				data->tx_fifo_len -= take;
+				off = take;
+			}
+#endif
+			for (; off < m->len; off++) {
+				rc = (off == 0)
+					     ? (cb->read_requested_cb != NULL
+							? cb->read_requested_cb(data->target_cfg,
+										&m->buf[off])
+							: -ENOSYS)
+					     : (cb->read_processed_cb != NULL
+							? cb->read_processed_cb(data->target_cfg,
+										&m->buf[off])
+							: -ENOSYS);
+				if (rc != 0) {
+					return rc;
+				}
+			}
+			m->num_xfer = m->len;
+		} else {
+			for (uint32_t j = 0; j < m->len; j++) {
+				if (j == 0 && cb->write_requested_cb != NULL) {
+					rc = cb->write_requested_cb(data->target_cfg);
+					if (rc != 0) {
+						return rc;
+					}
+				}
+				if (cb->write_received_cb != NULL) {
+					rc = cb->write_received_cb(data->target_cfg, m->buf[j]);
+					if (rc != 0) {
+						return rc;
+					}
+				}
+			}
+			m->num_xfer = m->len;
+		}
+
+		if ((m->flags & I3C_MSG_STOP) && cb->stop_cb != NULL) {
+			(void)cb->stop_cb(data->target_cfg);
+		}
+	}
+
+	return 0;
+}
+#endif /* CONFIG_I3C_TARGET */
+
 static int i3c_emul_xfers(const struct device *dev, struct i3c_device_desc *target,
 			  struct i3c_msg *msgs, uint8_t num_msgs)
 {
@@ -361,6 +438,16 @@ static int i3c_emul_xfers(const struct device *dev, struct i3c_device_desc *targ
 	if (target == NULL || msgs == NULL) {
 		return -EINVAL;
 	}
+
+#ifdef CONFIG_I3C_TARGET
+	{
+		struct i3c_emul_data *data = dev->data;
+
+		if (data->target_cfg != NULL && data->target_cfg->address == target->dynamic_addr) {
+			return i3c_emul_target_xfer(data, msgs, num_msgs);
+		}
+	}
+#endif
 
 	emul = i3c_emul_find_by_addr(dev, target->dynamic_addr, false);
 	if (emul == NULL) {
@@ -484,6 +571,91 @@ static int i3c_emul_ibi_crr_response(struct i3c_device_desc *target, bool ack)
 	return 0;
 }
 #endif /* CONFIG_I3C_USE_IBI */
+
+#ifdef CONFIG_I3C_TARGET
+static int i3c_emul_target_register(const struct device *dev, struct i3c_target_config *cfg)
+{
+	struct i3c_emul_data *data = dev->data;
+
+	if (cfg == NULL) {
+		return -EINVAL;
+	}
+
+	data->target_cfg = cfg;
+#if CONFIG_I3C_EMUL_TARGET_TX_FIFO_SIZE > 0
+	data->tx_fifo_len = 0;
+	data->tx_fifo_hdr_mode = 0;
+#endif
+	return 0;
+}
+
+static int i3c_emul_target_unregister(const struct device *dev, struct i3c_target_config *cfg)
+{
+	struct i3c_emul_data *data = dev->data;
+
+	if (data->target_cfg != cfg) {
+		return -EINVAL;
+	}
+
+	data->target_cfg = NULL;
+#if CONFIG_I3C_EMUL_TARGET_TX_FIFO_SIZE > 0
+	data->tx_fifo_len = 0;
+	data->tx_fifo_hdr_mode = 0;
+#endif
+	return 0;
+}
+
+static int i3c_emul_target_tx_write(const struct device *dev, uint8_t *buf, uint16_t len,
+				    uint8_t hdr_mode)
+{
+#if CONFIG_I3C_EMUL_TARGET_TX_FIFO_SIZE > 0
+	struct i3c_emul_data *data = dev->data;
+	size_t free_space = sizeof(data->tx_fifo) - data->tx_fifo_len;
+	size_t take = MIN(free_space, (size_t)len);
+
+	if (data->target_cfg == NULL) {
+		return -ENOTSUP;
+	}
+	if (take == 0U && len > 0U) {
+		return -ENOSPC;
+	}
+
+	memcpy(&data->tx_fifo[data->tx_fifo_len], buf, take);
+	data->tx_fifo_len += take;
+	data->tx_fifo_hdr_mode = hdr_mode;
+
+	return (int)take;
+#else
+	ARG_UNUSED(dev);
+	ARG_UNUSED(buf);
+	ARG_UNUSED(len);
+	ARG_UNUSED(hdr_mode);
+	return -ENOTSUP;
+#endif
+}
+
+static int i3c_emul_target_controller_handoff(const struct device *dev, bool accept)
+{
+	struct i3c_emul_data *data = dev->data;
+
+	/*
+	 * "Accept" here means: when the active controller offers controller
+	 * role to this device (via GETACCCR), the application is willing
+	 * to take it. is_secondary is the boot-time role (Primary vs
+	 * Secondary controller) and stays as initialized; it is NOT a
+	 * "currently active" flag.
+	 */
+	data->handoff_accept = accept;
+
+	if (accept && data->target_cfg != NULL &&
+	    data->target_cfg->callbacks != NULL &&
+	    data->target_cfg->callbacks->controller_handoff_cb != NULL) {
+		(void)data->target_cfg->callbacks->controller_handoff_cb(data->target_cfg);
+	}
+
+	return 0;
+}
+#endif /* CONFIG_I3C_TARGET */
 
 static int i3c_emul_i2c_api_configure(const struct device *dev, uint32_t dev_config)
 {
@@ -723,6 +895,12 @@ static DEVICE_API(i3c, i3c_emul_api) = {
 	.ibi_disable = i3c_emul_ibi_disable,
 	.ibi_hj_response = i3c_emul_ibi_hj_response,
 	.ibi_crr_response = i3c_emul_ibi_crr_response,
+#endif
+#ifdef CONFIG_I3C_TARGET
+	.target_register = i3c_emul_target_register,
+	.target_unregister = i3c_emul_target_unregister,
+	.target_tx_write = i3c_emul_target_tx_write,
+	.target_controller_handoff = i3c_emul_target_controller_handoff,
 #endif
 #ifdef CONFIG_I3C_RTIO
 	.iodev_submit = i3c_iodev_submit_fallback,

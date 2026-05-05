@@ -11,4 +11,5 @@ target_sources(app PRIVATE
 )
 target_sources_ifdef(CONFIG_I3C_USE_IBI app PRIVATE src/test_ibi.c)
 target_sources_ifdef(CONFIG_I3C_CALLBACK app PRIVATE src/test_async.c)
+target_sources_ifdef(CONFIG_I3C_TARGET app PRIVATE src/test_target.c)
 target_include_directories(app PRIVATE src)
