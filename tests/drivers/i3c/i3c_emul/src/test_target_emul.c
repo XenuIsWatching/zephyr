@@ -235,6 +235,7 @@ static int test_target_do_ccc(const struct emul *target, struct i3c_ccc_payload 
 		}
 		if (tp != NULL && tp->data != NULL && tp->data_len >= 1U) {
 			data->dyn_addr = tp->data[0] >> 1;
+			target->bus.i3c->dynamic_addr = data->dyn_addr;
 		}
 		return 0;
 	case I3C_CCC_SETNEWDA:
@@ -247,10 +248,15 @@ static int test_target_do_ccc(const struct emul *target, struct i3c_ccc_payload 
 		}
 		if (tp != NULL && tp->data != NULL && tp->data_len >= 1U) {
 			data->dyn_addr = tp->data[0] >> 1;
+			target->bus.i3c->dynamic_addr = data->dyn_addr;
 		}
 		return 0;
 	case I3C_CCC_RSTDAA:
 		data->dyn_addr = 0;
+		target->bus.i3c->dynamic_addr = 0;
+#ifdef CONFIG_I3C_USE_IBI
+		target->bus.i3c->ibi_enabled = false;
+#endif
 		return 0;
 	default:
 		return -ENOTSUP;

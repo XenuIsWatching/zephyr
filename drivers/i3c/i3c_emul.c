@@ -300,31 +300,6 @@ static int i3c_emul_do_ccc_one(struct i3c_emul *emul, struct i3c_ccc_payload *pa
 	return emul->api->do_ccc(emul->target, payload, is_broadcast);
 }
 
-static void i3c_emul_post_ccc_update(struct i3c_ccc_payload *payload,
-				     struct i3c_ccc_target_payload *tp, struct i3c_emul *emul)
-{
-	uint8_t new_addr;
-
-	switch (payload->ccc.id) {
-	case I3C_CCC_SETDASA:
-	case I3C_CCC_SETNEWDA:
-		if (tp->data == NULL || tp->data_len < 1U) {
-			return;
-		}
-		/*
-		 * Bus-side mirror update only. The peripheral mutates its
-		 * own dyn_addr from inside its do_ccc handler — the wire
-		 * CCC reaches it directly, so it doesn't need a side-channel
-		 * callback for SETDASA / SETNEWDA / RSTDAA.
-		 */
-		new_addr = tp->data[0] >> 1;
-		emul->dynamic_addr = new_addr;
-		break;
-	default:
-		break;
-	}
-}
-
 static int i3c_emul_do_ccc_broadcast(const struct device *dev, struct i3c_ccc_payload *payload)
 {
 	struct i3c_device_desc *desc;
@@ -341,28 +316,6 @@ static int i3c_emul_do_ccc_broadcast(const struct device *dev, struct i3c_ccc_pa
 		rc = i3c_emul_do_ccc_one(emul, payload, true);
 		if (rc != 0 && rc != -ENOTSUP && ret == 0) {
 			ret = rc;
-		}
-	}
-
-	if (payload->ccc.id == I3C_CCC_RSTDAA) {
-		/*
-		 * Bus-side per-emul mirror cleanup. Controller-side state
-		 * (desc->dynamic_addr, address-slot map) is reset by
-		 * i3c_bus_rstdaa_all() in drivers/i3c/i3c_common.c. Each
-		 * peripheral wipes its own dyn_addr from inside its do_ccc
-		 * handler — RSTDAA reached it via the broadcast walk above.
-		 */
-		I3C_BUS_FOR_EACH_I3CDEV(dev, desc) {
-			struct i3c_emul *emul = i3c_emul_for_desc(desc);
-
-			if (emul == NULL) {
-				continue;
-			}
-
-			emul->dynamic_addr = 0U;
-#ifdef CONFIG_I3C_USE_IBI
-			emul->ibi_enabled = false;
-#endif
 		}
 	}
 
@@ -497,9 +450,7 @@ static int i3c_emul_do_ccc_direct(const struct device *dev, struct i3c_ccc_paylo
 		tp->num_xfer = 0;
 
 		rc = i3c_emul_do_ccc_one(emul, payload, false);
-		if (rc == 0) {
-			i3c_emul_post_ccc_update(payload, tp, emul);
-		} else if (ret == 0) {
+		if (rc != 0 && ret == 0) {
 			ret = rc;
 		}
 	}
