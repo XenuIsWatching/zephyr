@@ -121,40 +121,39 @@ static int i3c_emul_recover_bus(const struct device *dev)
 static int i3c_emul_reattach_i3c_device(const struct device *dev, struct i3c_device_desc *target,
 					uint8_t old_dyn_addr)
 {
-	struct i3c_emul *emul = i3c_emul_for_desc(target);
-
 	ARG_UNUSED(dev);
+	ARG_UNUSED(target);
 	ARG_UNUSED(old_dyn_addr);
 
-	if (emul == NULL) {
-		return 0;
-	}
-
-	emul->dynamic_addr = target->dynamic_addr;
-
-	if (emul->api != NULL && emul->api->set_dynamic_addr != NULL) {
-		return emul->api->set_dynamic_addr(emul->target, emul->dynamic_addr);
-	}
-
+	/*
+	 * Controller-side bookkeeping only: i3c_bus_setdasa /
+	 * i3c_bus_setnewda call this after the wire CCC has already
+	 * run (and the bus emulator's do_ccc post-handler has already
+	 * updated the peripheral's dynamic_addr mirror via its
+	 * set_dynamic_addr callback). The address-slot map is updated
+	 * by i3c_common.c::i3c_reattach_i3c_device itself. There is
+	 * nothing additional for the emulator to do here.
+	 */
 	return 0;
 }
 
 static int i3c_emul_detach_i3c_device(const struct device *dev, struct i3c_device_desc *target)
 {
-	struct i3c_emul *emul = i3c_emul_for_desc(target);
-
 	ARG_UNUSED(dev);
 
-	if (emul == NULL) {
-		return 0;
-	}
-
-	emul->dynamic_addr = 0U;
-
-	if (emul->api != NULL && emul->api->set_dynamic_addr != NULL) {
-		(void)emul->api->set_dynamic_addr(emul->target, 0U);
-	}
-
+	/*
+	 * detach is a controller-side bookkeeping operation: the I3C
+	 * subsystem is removing this desc from its attached-devices list
+	 * and freeing the address slot. It does NOT touch the peripheral
+	 * on the wire — the only CCC that resets a peripheral's dynamic
+	 * address is RSTDAA, which the bus emulator handles in its
+	 * broadcast do_ccc path.
+	 *
+	 * Clear desc->controller_priv so a subsequent re-attach (e.g. via
+	 * i3c_sec_handoffed reading DEFTGTS) gets a clean slate and can
+	 * re-link the peripheral by walking on dynamic address.
+	 */
+	target->controller_priv = NULL;
 	return 0;
 }
 
