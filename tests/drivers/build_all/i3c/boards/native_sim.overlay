@@ -1,0 +1,17 @@
+/*
+ * Copyright (c) 2026 Ryan McClelland
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/ {
+	i3c_emul_bus: i3c@600 {
+		status = "okay";
+		compatible = "zephyr,i3c-emul-controller";
+		reg = <0x600 4>;
+		#address-cells = <3>;
+		#size-cells = <0>;
+		i3c-scl-hz = <12500000>;
+		i2c-scl-hz = <400000>;
+	};
+};
