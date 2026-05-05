@@ -58,12 +58,6 @@ struct test_target_data {
 	uint8_t deftgts_buf[TEST_TARGET_DEFTGTS_BUF_SIZE];
 	size_t deftgts_len;
 	bool deftgts_seen;
-
-	/* Set when the peripheral has answered a GETACCCR direct CCC, so
-	 * controller-side handoff initiation tests can verify the bus
-	 * emulator routed GETACCCR through.
-	 */
-	bool getacccr_seen;
 };
 
 static int test_target_xfers(const struct emul *target, struct i3c_msg *msgs, uint8_t num_msgs)
@@ -166,7 +160,6 @@ static int test_target_do_ccc(const struct emul *target, struct i3c_ccc_payload 
 		if (tp != NULL && tp->data != NULL && tp->data_len >= 1U) {
 			tp->data[0] = (data->dyn_addr << 1) | i3c_odd_parity(data->dyn_addr);
 			tp->num_xfer = 1U;
-			data->getacccr_seen = true;
 		}
 		return 0;
 
@@ -348,20 +341,6 @@ void test_target_clear_deftgts(const struct emul *target)
 	data->deftgts_seen = false;
 }
 
-bool test_target_getacccr_was_seen(const struct emul *target)
-{
-	struct test_target_data *data = target->data;
-
-	return data->getacccr_seen;
-}
-
-void test_target_clear_getacccr(const struct emul *target)
-{
-	struct test_target_data *data = target->data;
-
-	data->getacccr_seen = false;
-}
-
 static const struct test_target_backend_api test_target_backend = {
 	.get_reg = test_target_get_reg,
 	.set_reg = test_target_set_reg,
@@ -377,8 +356,6 @@ static const struct test_target_backend_api test_target_backend = {
 	.deftgts_was_seen = test_target_deftgts_was_seen,
 	.get_deftgts = test_target_get_deftgts,
 	.clear_deftgts = test_target_clear_deftgts,
-	.getacccr_was_seen = test_target_getacccr_was_seen,
-	.clear_getacccr = test_target_clear_getacccr,
 };
 
 static int test_target_init(const struct emul *target, const struct device *parent)

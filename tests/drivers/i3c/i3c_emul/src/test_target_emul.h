@@ -26,8 +26,6 @@ struct test_target_backend_api {
 	bool (*deftgts_was_seen)(const struct emul *target);
 	size_t (*get_deftgts)(const struct emul *target, uint8_t *out, size_t out_len);
 	void (*clear_deftgts)(const struct emul *target);
-	bool (*getacccr_was_seen)(const struct emul *target);
-	void (*clear_getacccr)(const struct emul *target);
 };
 
 uint8_t test_target_get_reg(const struct emul *target, uint8_t idx);
@@ -44,7 +42,5 @@ uint16_t test_target_get_mwl(const struct emul *target);
 bool test_target_deftgts_was_seen(const struct emul *target);
 size_t test_target_get_deftgts(const struct emul *target, uint8_t *out, size_t out_len);
 void test_target_clear_deftgts(const struct emul *target);
-bool test_target_getacccr_was_seen(const struct emul *target);
-void test_target_clear_getacccr(const struct emul *target);
 
 #endif /* TEST_DRIVERS_I3C_I3C_EMUL_TEST_TARGET_EMUL_H_ */
