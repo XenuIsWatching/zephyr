@@ -95,30 +95,6 @@ static int i3c_emul_recover_bus(const struct device *dev)
 	return 0;
 }
 
-static int i3c_emul_attach_i3c_device(const struct device *dev, struct i3c_device_desc *target)
-{
-	struct i3c_emul *emul = i3c_emul_for_desc(target);
-
-	ARG_UNUSED(dev);
-
-	if (emul == NULL) {
-		/*
-		 * controller_priv is filled in by i3c_emul_register, which
-		 * runs after i3c_addr_slots_init has issued the initial
-		 * attach. Subsequent attach calls (e.g. SETDASA reattach
-		 * helpers) carry the linkage already.
-		 */
-		return 0;
-	}
-
-	emul->static_addr = target->static_addr;
-	if (target->dynamic_addr != 0U) {
-		emul->dynamic_addr = target->dynamic_addr;
-	}
-
-	return 0;
-}
-
 static int i3c_emul_reattach_i3c_device(const struct device *dev, struct i3c_device_desc *target,
 					uint8_t old_dyn_addr)
 {
@@ -730,7 +706,6 @@ static DEVICE_API(i3c, i3c_emul_api) = {
 	.configure = i3c_emul_configure,
 	.config_get = i3c_emul_config_get,
 	.recover_bus = i3c_emul_recover_bus,
-	.attach_i3c_device = i3c_emul_attach_i3c_device,
 	.reattach_i3c_device = i3c_emul_reattach_i3c_device,
 	.detach_i3c_device = i3c_emul_detach_i3c_device,
 	.attach_i2c_device = i3c_emul_attach_i2c_device,
