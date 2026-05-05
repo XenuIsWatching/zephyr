@@ -26,6 +26,7 @@ struct emul;
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/espi_emul.h>
 #include <zephyr/drivers/i2c_emul.h>
+#include <zephyr/drivers/i3c_emul.h>
 #include <zephyr/drivers/spi_emul.h>
 #include <zephyr/drivers/mspi_emul.h>
 #include <zephyr/drivers/uart_emul.h>
@@ -36,6 +37,7 @@ struct emul;
  */
 enum emul_bus_type {
 	EMUL_BUS_TYPE_I2C,
+	EMUL_BUS_TYPE_I3C,
 	EMUL_BUS_TYPE_ESPI,
 	EMUL_BUS_TYPE_SPI,
 	EMUL_BUS_TYPE_MSPI,
@@ -93,6 +95,7 @@ struct emul {
 	/** Pointer to the emulated bus node */
 	union bus {
 		struct i2c_emul *i2c;
+		struct i3c_emul *i3c;
 		struct espi_emul *espi;
 		struct spi_emul *spi;
 		struct mspi_emul *mspi;
@@ -117,8 +120,9 @@ struct emul {
 #define Z_EMUL_REG_BUS_IDENTIFIER(_dev_node_id) _CONCAT(_CONCAT(__emulreg_, _dev_node_id), _bus)
 
 /* Conditionally places text based on what bus _dev_node_id is on. */
-#define Z_EMUL_BUS(_dev_node_id, _i2c, _espi, _spi, _mspi, _uart, _none)                           \
+#define Z_EMUL_BUS(_dev_node_id, _i2c, _i3c, _espi, _spi, _mspi, _uart, _none)                     \
 	COND_CASE_1(DT_ON_BUS(_dev_node_id, i2c), (_i2c),                                          \
+		    DT_ON_BUS(_dev_node_id, i3c), (_i3c),                                          \
 		    DT_ON_BUS(_dev_node_id, espi), (_espi),                                        \
 		    DT_ON_BUS(_dev_node_id, spi), (_spi),                                          \
 		    DT_ON_BUS(_dev_node_id, mspi), (_mspi),                                        \
@@ -140,21 +144,22 @@ struct emul {
  * @param _backend_api emulator-specific backend api
  */
 #define EMUL_DT_DEFINE(node_id, init_fn, data_ptr, cfg_ptr, bus_api, _backend_api)                 \
-	static struct Z_EMUL_BUS(node_id, i2c_emul, espi_emul, spi_emul, mspi_emul, uart_emul,     \
-				 no_bus_emul) Z_EMUL_REG_BUS_IDENTIFIER(node_id) = {               \
+	static struct Z_EMUL_BUS(node_id, i2c_emul, i3c_emul, espi_emul, spi_emul, mspi_emul,      \
+				 uart_emul, no_bus_emul)                                           \
+		Z_EMUL_REG_BUS_IDENTIFIER(node_id) = {                                             \
 		.api = bus_api,                                                                    \
 		IF_ENABLED(DT_NODE_HAS_PROP(node_id, reg),                                         \
-			   (.Z_EMUL_BUS(node_id, addr, chipsel, chipsel, dev_idx, dummy, addr) =   \
-				    DT_REG_ADDR(node_id),))};                                      \
+			   (.Z_EMUL_BUS(node_id, addr, static_addr, chipsel, chipsel, dev_idx,     \
+					dummy, addr) = DT_REG_ADDR(node_id),))};                   \
 	const STRUCT_SECTION_ITERABLE(emul, EMUL_DT_NAME_GET(node_id)) __used = {                  \
 		.init = (init_fn),                                                                 \
 		.dev = DEVICE_DT_GET(node_id),                                                     \
 		.cfg = (cfg_ptr),                                                                  \
 		.data = (data_ptr),                                                                \
-		.bus_type = Z_EMUL_BUS(node_id, EMUL_BUS_TYPE_I2C, EMUL_BUS_TYPE_ESPI,             \
-				       EMUL_BUS_TYPE_SPI, EMUL_BUS_TYPE_MSPI, EMUL_BUS_TYPE_UART,  \
-				       EMUL_BUS_TYPE_NONE),                                        \
-		.bus = {.Z_EMUL_BUS(node_id, i2c, espi, spi, mspi, uart, none) =                   \
+		.bus_type = Z_EMUL_BUS(node_id, EMUL_BUS_TYPE_I2C, EMUL_BUS_TYPE_I3C,              \
+				       EMUL_BUS_TYPE_ESPI, EMUL_BUS_TYPE_SPI, EMUL_BUS_TYPE_MSPI,  \
+				       EMUL_BUS_TYPE_UART, EMUL_BUS_TYPE_NONE),                    \
+		.bus = {.Z_EMUL_BUS(node_id, i2c, i3c, espi, spi, mspi, uart, none) =              \
 				&(Z_EMUL_REG_BUS_IDENTIFIER(node_id))},                            \
 		.backend_api = (_backend_api),                                                     \
 	};
