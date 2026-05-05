@@ -21,27 +21,23 @@
 #define I3C_BUS DT_NODELABEL(i3c0)
 #define TARGET_A DT_NODELABEL(test_target_a)
 
-#define TARGET_A_PID  ((uint64_t)0x1234 << 32 | 0x12345678)
+#define TARGET_A_PID	TEST_TARGET_A_PID
 
 static const struct device *bus = DEVICE_DT_GET(I3C_BUS);
 
 static struct i3c_device_desc *find_desc(uint64_t pid)
 {
-	struct i3c_device_id id = I3C_DEVICE_ID(pid);
+	struct i3c_device_id id = { .pid = pid };
 
 	return i3c_device_find(bus, &id);
 }
 
 static void *i3c_emul_async_setup(void)
 {
-	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
+	int rc = test_target_bus_known_state(bus, TEST_TARGET_A_PID, TEST_TARGET_A_STATIC,
+					     TEST_TARGET_B_PID, TEST_TARGET_B_INIT_DA);
 
-	zassert_not_null(desc, "target A desc");
-	if (desc->dynamic_addr == 0U) {
-		int rc = i3c_bus_setdasa(desc, desc->static_addr);
-
-		zassert_ok(rc, "SETDASA: %d", rc);
-	}
+	zassert_ok(rc, "test_target_bus_known_state: %d", rc);
 	return NULL;
 }
 

@@ -21,7 +21,7 @@
 #define I3C_BUS DT_NODELABEL(i3c0)
 #define TARGET_A DT_NODELABEL(test_target_a)
 
-#define TARGET_A_PID  ((uint64_t)0x1234 << 32 | 0x12345678)
+#define TARGET_A_PID		TEST_TARGET_A_PID
 
 static const struct device *bus = DEVICE_DT_GET(I3C_BUS);
 static const struct emul *target_a = EMUL_DT_GET(TARGET_A);
@@ -52,21 +52,21 @@ static int test_ibi_cb(struct i3c_device_desc *target, struct i3c_ibi_payload *p
 
 static struct i3c_device_desc *find_desc(uint64_t pid)
 {
-	struct i3c_device_id id = I3C_DEVICE_ID(pid);
+	struct i3c_device_id id = { .pid = pid };
 
 	return i3c_device_find(bus, &id);
 }
 
 static void *i3c_emul_ibi_setup(void)
 {
-	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
+	struct i3c_device_desc *desc;
+	int rc = test_target_bus_known_state(bus, TEST_TARGET_A_PID, TEST_TARGET_A_STATIC,
+					     TEST_TARGET_B_PID, TEST_TARGET_B_INIT_DA);
 
+	zassert_ok(rc, "test_target_bus_known_state: %d", rc);
+
+	desc = find_desc(TARGET_A_PID);
 	zassert_not_null(desc, "target A desc");
-	if (desc->dynamic_addr == 0U) {
-		int rc = i3c_bus_setdasa(desc, desc->static_addr);
-
-		zassert_ok(rc, "SETDASA failed: %d", rc);
-	}
 	desc->ibi_cb = test_ibi_cb;
 	k_sem_init(&g_ibi.fired, 0, 1);
 	return NULL;
@@ -81,6 +81,12 @@ static void i3c_emul_ibi_before(void *fixture)
 	memset(g_ibi.last_payload, 0, sizeof(g_ibi.last_payload));
 	k_sem_reset(&g_ibi.fired);
 	(void)i3c_ibi_hj_response(bus, false);
+
+	/* Re-establish the canonical address state in case a prior test
+	 * (RSTDAA, HJ-driven DAA, etc.) left things in a different shape.
+	 */
+	(void)test_target_bus_known_state(bus, TEST_TARGET_A_PID, TEST_TARGET_A_STATIC,
+					  TEST_TARGET_B_PID, TEST_TARGET_B_INIT_DA);
 }
 
 ZTEST(i3c_emul_ibi, test_ibi_disabled_drops)
@@ -125,15 +131,14 @@ ZTEST(i3c_emul_ibi, test_ibi_enabled_delivers_payload)
 
 ZTEST(i3c_emul_ibi, test_hj_nack)
 {
-	struct i3c_device_desc *desc_a = find_desc(TARGET_A_PID);
 	int rc;
 
 	/*
-	 * HJ is only legal when the target has no dynamic address — RSTDAA
-	 * first to clear it, then assert the controller's NACK preference
-	 * blocks the HJ at the bus emulator (target_raise_hj returns
-	 * -ENOTCONN). Re-bring the address up after so subsequent tests
-	 * find the device.
+	 * HJ is only legal when the target has no dynamic address. RSTDAA
+	 * to clear it, then assert the controller's NACK preference blocks
+	 * the HJ at the bus emulator (target_raise_hj returns -ENOTCONN).
+	 * Per-test before-hook restores the canonical address state for
+	 * subsequent tests.
 	 */
 	rc = i3c_bus_rstdaa_all(bus);
 	zassert_ok(rc, "rstdaa: %d", rc);
@@ -145,21 +150,18 @@ ZTEST(i3c_emul_ibi, test_hj_nack)
 	zassert_equal(rc, -ENOTCONN, "expected -ENOTCONN when HJ NACKed, got %d", rc);
 	zassert_equal(test_target_get_dynamic_addr(target_a), 0,
 		      "NACKed HJ must not give the target a dynamic address");
-
-	rc = i3c_bus_setdasa(desc_a, desc_a->static_addr);
-	zassert_ok(rc, "restore SETDASA: %d", rc);
 }
 
 ZTEST(i3c_emul_ibi, test_hj_ack)
 {
-	struct i3c_device_desc *desc_a = find_desc(TARGET_A_PID);
 	int rc;
 
 	/*
 	 * Spec model: a target with no dynamic address raises HJ; the
 	 * active controller has armed HJ ACK, so it ACKs and runs ENTDAA
 	 * (i3c_do_daa) from the IBI workqueue handler. After the workq
-	 * drains, the target should have a dynamic address.
+	 * drains, the target should have a dynamic address. Per-test
+	 * before-hook restores the canonical address state.
 	 */
 	rc = i3c_bus_rstdaa_all(bus);
 	zassert_ok(rc, "rstdaa: %d", rc);
@@ -177,13 +179,6 @@ ZTEST(i3c_emul_ibi, test_hj_ack)
 		     "ACKed HJ must trigger DAA and give the target a dynamic address");
 
 	(void)i3c_ibi_hj_response(bus, false);
-
-	/* Restore the static-DA mapping subsequent tests expect. */
-	if (desc_a->dynamic_addr != desc_a->static_addr) {
-		(void)i3c_bus_rstdaa_all(bus);
-		rc = i3c_bus_setdasa(desc_a, desc_a->static_addr);
-		zassert_ok(rc, "restore SETDASA: %d", rc);
-	}
 }
 
 ZTEST(i3c_emul_ibi, test_hj_rejected_when_target_has_da)

@@ -22,9 +22,9 @@
 #define TARGET_A DT_NODELABEL(test_target_a)
 #define TARGET_B DT_NODELABEL(test_target_b)
 
-#define TARGET_A_PID  ((uint64_t)0x1234 << 32 | 0x12345678)
-#define TARGET_B_PID  ((uint64_t)0x5678 << 32 | 0xABCDEF01)
-#define TARGET_B_INIT_DA 0x42
+#define TARGET_A_PID		TEST_TARGET_A_PID
+#define TARGET_B_PID		TEST_TARGET_B_PID
+#define TARGET_B_INIT_DA	TEST_TARGET_B_INIT_DA
 
 static const struct device *bus = DEVICE_DT_GET(I3C_BUS);
 static const struct emul *target_a = EMUL_DT_GET(TARGET_A);
@@ -32,7 +32,7 @@ static const struct emul *target_b = EMUL_DT_GET(TARGET_B);
 
 static struct i3c_device_desc *find_desc(uint64_t pid)
 {
-	struct i3c_device_id id = I3C_DEVICE_ID(pid);
+	struct i3c_device_id id = { .pid = pid };
 
 	return i3c_device_find(bus, &id);
 }
@@ -125,21 +125,10 @@ ZTEST(i3c_emul_core, test_mock_api_returns_eio)
 
 static void *i3c_emul_setup(void)
 {
-	struct i3c_device_desc *desc_a = find_desc(TARGET_A_PID);
-	struct i3c_device_desc *desc_b = find_desc(TARGET_B_PID);
-	int rc;
+	int rc = test_target_bus_known_state(bus, TARGET_A_PID, 0x55,
+					     TARGET_B_PID, TARGET_B_INIT_DA);
 
-	zassert_not_null(desc_a, "test setup: target A desc");
-	zassert_not_null(desc_b, "test setup: target B desc");
-
-	if (desc_a->dynamic_addr == 0U) {
-		rc = i3c_bus_setdasa(desc_a, desc_a->static_addr);
-		zassert_ok(rc, "SETDASA on target A failed: %d", rc);
-	}
-	if (desc_b->dynamic_addr == 0U) {
-		rc = i3c_do_daa(bus);
-		zassert_ok(rc, "DAA failed: %d", rc);
-	}
+	zassert_ok(rc, "test_target_bus_known_state: %d", rc);
 	return NULL;
 }
 

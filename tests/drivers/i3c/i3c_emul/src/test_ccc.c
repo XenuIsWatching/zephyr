@@ -26,8 +26,8 @@
 #define TARGET_A DT_NODELABEL(test_target_a)
 #define TARGET_B DT_NODELABEL(test_target_b)
 
-#define TARGET_A_PID  ((uint64_t)0x1234 << 32 | 0x12345678)
-#define TARGET_B_PID  ((uint64_t)0x5678 << 32 | 0xABCDEF01)
+#define TARGET_A_PID		TEST_TARGET_A_PID
+#define TARGET_B_PID		TEST_TARGET_B_PID
 
 static const struct device *bus = DEVICE_DT_GET(I3C_BUS);
 static const struct emul *target_a = EMUL_DT_GET(TARGET_A);
@@ -35,29 +35,29 @@ static const struct emul *target_b = EMUL_DT_GET(TARGET_B);
 
 static struct i3c_device_desc *find_desc(uint64_t pid)
 {
-	struct i3c_device_id id = I3C_DEVICE_ID(pid);
+	struct i3c_device_id id = { .pid = pid };
 
 	return i3c_device_find(bus, &id);
 }
 
 static void *ccc_setup(void)
 {
-	struct i3c_device_desc *desc_a = find_desc(TARGET_A_PID);
-	struct i3c_device_desc *desc_b = find_desc(TARGET_B_PID);
-	int rc;
+	int rc = test_target_bus_known_state(bus, TEST_TARGET_A_PID, TEST_TARGET_A_STATIC,
+					     TEST_TARGET_B_PID, TEST_TARGET_B_INIT_DA);
 
-	zassert_not_null(desc_a, "target A desc");
-	zassert_not_null(desc_b, "target B desc");
-
-	if (desc_a->dynamic_addr == 0U) {
-		rc = i3c_bus_setdasa(desc_a, desc_a->static_addr);
-		zassert_ok(rc, "SETDASA target A: %d", rc);
-	}
-	if (desc_b->dynamic_addr == 0U) {
-		rc = i3c_do_daa(bus);
-		zassert_ok(rc, "DAA: %d", rc);
-	}
+	zassert_ok(rc, "test_target_bus_known_state: %d", rc);
 	return NULL;
+}
+
+static void ccc_before(void *fixture)
+{
+	ARG_UNUSED(fixture);
+
+	/* Re-establish the canonical address state so per-test mutations
+	 * (RSTDAA, SETNEWDA, ...) don't leak between tests.
+	 */
+	(void)test_target_bus_known_state(bus, TEST_TARGET_A_PID, TEST_TARGET_A_STATIC,
+					  TEST_TARGET_B_PID, TEST_TARGET_B_INIT_DA);
 }
 
 ZTEST(i3c_emul_ccc, test_setmwl_getmwl_round_trip)
@@ -116,7 +116,6 @@ ZTEST(i3c_emul_ccc, test_getstatus_returns_poked_value)
 ZTEST(i3c_emul_ccc, test_setnewda_changes_dynamic_addr)
 {
 	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
-	uint8_t old_addr = desc->dynamic_addr;
 	const uint8_t new_addr = 0x33;
 	int rc;
 
@@ -126,11 +125,9 @@ ZTEST(i3c_emul_ccc, test_setnewda_changes_dynamic_addr)
 	zassert_equal(test_target_get_dynamic_addr(target_a), new_addr,
 		      "peripheral mirror updated");
 
-	/* Restore so subsequent tests in this suite still find target A. */
-	rc = i3c_bus_setnewda(desc, old_addr);
-	zassert_ok(rc, "SETNEWDA restore: %d", rc);
-	zassert_equal(test_target_get_dynamic_addr(target_a), old_addr,
-		      "peripheral mirror restored");
+	/* No restore here — the suite's per-test before-hook re-establishes
+	 * the canonical address state for whichever test runs next.
+	 */
 }
 
 ZTEST(i3c_emul_ccc, test_rstdaa_clears_addresses)
@@ -150,13 +147,9 @@ ZTEST(i3c_emul_ccc, test_rstdaa_clears_addresses)
 	zassert_equal(test_target_get_dynamic_addr(target_a), 0U, "A peripheral mirror cleared");
 	zassert_equal(test_target_get_dynamic_addr(target_b), 0U, "B peripheral mirror cleared");
 
-	/* Re-establish addresses so the suite-level fixture invariants hold
-	 * for any subsequent test that runs after this one.
+	/* No restore here — the suite's per-test before-hook re-establishes
+	 * the canonical address state for whichever test runs next.
 	 */
-	rc = i3c_bus_setdasa(desc_a, desc_a->static_addr);
-	zassert_ok(rc, "SETDASA restore A: %d", rc);
-	rc = i3c_do_daa(bus);
-	zassert_ok(rc, "DAA restore: %d", rc);
 }
 
 ZTEST(i3c_emul_ccc, test_deftgts_broadcast_reaches_peripherals)
@@ -190,4 +183,4 @@ ZTEST(i3c_emul_ccc, test_deftgts_broadcast_reaches_peripherals)
 	zassert_equal(buf[0], 2U, "DEFTGTS count = num attached, got %u", buf[0]);
 }
 
-ZTEST_SUITE(i3c_emul_ccc, NULL, ccc_setup, NULL, NULL, NULL);
+ZTEST_SUITE(i3c_emul_ccc, NULL, ccc_setup, ccc_before, NULL, NULL);

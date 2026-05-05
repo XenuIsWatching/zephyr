@@ -19,13 +19,13 @@
 #define I3C_BUS DT_NODELABEL(i3c0)
 #define TARGET_MODE_ADDR 0x6A
 
-#define TARGET_A_PID  ((uint64_t)0x1234 << 32 | 0x12345678)
+#define TARGET_A_PID		TEST_TARGET_A_PID
 
 static const struct device *bus = DEVICE_DT_GET(I3C_BUS);
 
 static struct i3c_device_desc *find_desc(uint64_t pid)
 {
-	struct i3c_device_id id = I3C_DEVICE_ID(pid);
+	struct i3c_device_id id = { .pid = pid };
 
 	return i3c_device_find(bus, &id);
 }
@@ -108,6 +108,11 @@ static struct i3c_device_desc shadow_desc;
 
 static void *target_setup(void)
 {
+	int rc = test_target_bus_known_state(bus, TEST_TARGET_A_PID, TEST_TARGET_A_STATIC,
+					     TEST_TARGET_B_PID, TEST_TARGET_B_INIT_DA);
+
+	zassert_ok(rc, "test_target_bus_known_state: %d", rc);
+
 	shadow_desc.bus = bus;
 	shadow_desc.dynamic_addr = TARGET_MODE_ADDR;
 	return NULL;
@@ -125,6 +130,13 @@ static void target_before(void *fixture)
 	g.last_write_idx = 0;
 	g.read_seq = 0xA0;
 	memset(g.last_write, 0, sizeof(g.last_write));
+
+	/* Re-establish the canonical address state — handoff tests
+	 * (RSTDAA, sec_handoffed re-attach) can leave the bus in a
+	 * different shape.
+	 */
+	(void)test_target_bus_known_state(bus, TEST_TARGET_A_PID, TEST_TARGET_A_STATIC,
+					  TEST_TARGET_B_PID, TEST_TARGET_B_INIT_DA);
 }
 
 ZTEST(i3c_emul_target, test_register_then_xfer_invokes_callbacks)
@@ -237,10 +249,8 @@ ZTEST(i3c_emul_target, test_handoff_completes_on_getacccr_to_registered_target)
 	 */
 	desc_a = find_desc(TARGET_A_PID);
 	zassert_not_null(desc_a, "target A desc");
-	if (desc_a->dynamic_addr == 0U) {
-		rc = i3c_bus_setdasa(desc_a, desc_a->static_addr);
-		zassert_ok(rc, "SETDASA: %d", rc);
-	}
+	zassert_not_equal(desc_a->dynamic_addr, 0U,
+			  "before-hook should have established target A's DA");
 
 	tcfg_at_a.address = desc_a->dynamic_addr;
 	rc = i3c_target_register(bus, &tcfg_at_a);
@@ -283,10 +293,8 @@ ZTEST(i3c_emul_target, test_handoff_nacked_by_application_fails)
 	 */
 	desc_a = find_desc(TARGET_A_PID);
 	zassert_not_null(desc_a, "target A desc");
-	if (desc_a->dynamic_addr == 0U) {
-		rc = i3c_bus_setdasa(desc_a, desc_a->static_addr);
-		zassert_ok(rc, "SETDASA: %d", rc);
-	}
+	zassert_not_equal(desc_a->dynamic_addr, 0U,
+			  "before-hook should have established target A's DA");
 
 	tcfg_at_a.address = desc_a->dynamic_addr;
 	rc = i3c_target_register(bus, &tcfg_at_a);
@@ -319,10 +327,8 @@ ZTEST(i3c_emul_target, test_controller_handoff_to_peripheral_via_getacccr)
 	 */
 	desc = find_desc(TARGET_A_PID);
 	zassert_not_null(desc, "target A desc");
-	if (desc->dynamic_addr == 0U) {
-		rc = i3c_bus_setdasa(desc, desc->static_addr);
-		zassert_ok(rc, "SETDASA: %d", rc);
-	}
+	zassert_not_equal(desc->dynamic_addr, 0U,
+			  "before-hook should have established target A's DA");
 
 	rc = i3c_device_controller_handoff(desc, true);
 	zassert_ok(rc, "i3c_device_controller_handoff: %d", rc);
@@ -369,10 +375,8 @@ ZTEST(i3c_emul_target, test_handoff_completes_and_sec_handoffed_repopulates_bus)
 	 */
 	desc_a = find_desc(TARGET_A_PID);
 	zassert_not_null(desc_a, "target A desc");
-	if (desc_a->dynamic_addr == 0U) {
-		rc = i3c_bus_setdasa(desc_a, desc_a->static_addr);
-		zassert_ok(rc, "SETDASA: %d", rc);
-	}
+	zassert_not_equal(desc_a->dynamic_addr, 0U,
+			  "before-hook should have established target A's DA");
 
 	tcfg_at_a.address = desc_a->dynamic_addr;
 	rc = i3c_target_register(bus, &tcfg_at_a);

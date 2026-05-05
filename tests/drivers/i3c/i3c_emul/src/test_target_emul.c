@@ -384,3 +384,42 @@ static int test_target_init(const struct emul *target, const struct device *pare
 			    &test_target_api, &test_target_backend);
 
 DT_INST_FOREACH_STATUS_OKAY(TEST_TARGET_INIT)
+
+int test_target_bus_known_state(const struct device *bus, uint64_t pid_a, uint8_t static_a,
+				uint64_t pid_b, uint8_t init_dyn_b)
+{
+	struct i3c_device_id id_a = { .pid = pid_a };
+	struct i3c_device_id id_b = { .pid = pid_b };
+	struct i3c_device_desc *desc_a = i3c_device_find(bus, &id_a);
+	struct i3c_device_desc *desc_b = i3c_device_find(bus, &id_b);
+	int rc;
+
+	if (desc_a == NULL || desc_b == NULL) {
+		return -ENODEV;
+	}
+
+	if (desc_a->dynamic_addr == static_a && desc_b->dynamic_addr == init_dyn_b) {
+		return 0;
+	}
+
+	rc = i3c_bus_rstdaa_all(bus);
+	if (rc != 0 && rc != -ENOTSUP) {
+		return rc;
+	}
+
+	rc = i3c_bus_setdasa(desc_a, static_a);
+	if (rc != 0) {
+		return rc;
+	}
+
+	rc = i3c_do_daa(bus);
+	if (rc != 0) {
+		return rc;
+	}
+
+	if (desc_a->dynamic_addr != static_a || desc_b->dynamic_addr != init_dyn_b) {
+		return -EIO;
+	}
+
+	return 0;
+}
