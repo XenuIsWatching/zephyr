@@ -136,4 +136,34 @@ ZTEST(i3c_emul_ibi, test_hj_ack)
 	(void)i3c_ibi_hj_response(bus, false);
 }
 
+ZTEST(i3c_emul_ibi, test_crr_nack)
+{
+	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
+	int rc;
+
+	zassert_not_null(desc, "target A desc");
+
+	rc = i3c_ibi_crr_response(desc, false);
+	zassert_ok(rc, "crr_response false: %d", rc);
+
+	rc = test_target_trigger_crr(target_a);
+	zassert_equal(rc, -ENOTCONN, "expected -ENOTCONN when CRR NACKed, got %d", rc);
+}
+
+ZTEST(i3c_emul_ibi, test_crr_ack)
+{
+	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
+	int rc;
+
+	zassert_not_null(desc, "target A desc");
+
+	rc = i3c_ibi_crr_response(desc, true);
+	zassert_ok(rc, "crr_response true: %d", rc);
+
+	rc = test_target_trigger_crr(target_a);
+	zassert_ok(rc, "trigger_crr after ACK: %d", rc);
+
+	(void)i3c_ibi_crr_response(desc, false);
+}
+
 ZTEST_SUITE(i3c_emul_ibi, NULL, i3c_emul_ibi_setup, i3c_emul_ibi_before, NULL, NULL);
