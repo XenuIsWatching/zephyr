@@ -415,6 +415,33 @@ static struct i3c_device_desc *i3c_emul_device_find(const struct device *dev,
 	return i3c_dev_list_find(&cfg->common.dev_list, id);
 }
 
+#ifdef CONFIG_I3C_CALLBACK
+static int i3c_emul_do_ccc_cb(const struct device *dev, struct i3c_ccc_payload *payload,
+			      i3c_callback_t cb, void *userdata)
+{
+	int ret = i3c_emul_do_ccc(dev, payload);
+
+	if (cb != NULL) {
+		cb(dev, ret, userdata);
+	}
+
+	return ret;
+}
+
+static int i3c_emul_xfers_cb(const struct device *dev, struct i3c_device_desc *target,
+			     struct i3c_msg *msgs, uint8_t num_msgs, i3c_callback_t cb,
+			     void *userdata)
+{
+	int ret = i3c_emul_xfers(dev, target, msgs, num_msgs);
+
+	if (cb != NULL) {
+		cb(dev, ret, userdata);
+	}
+
+	return ret;
+}
+#endif /* CONFIG_I3C_CALLBACK */
+
 #ifdef CONFIG_I3C_USE_IBI
 static int i3c_emul_ibi_enable(const struct device *dev, struct i3c_device_desc *target)
 {
@@ -712,11 +739,18 @@ static DEVICE_API(i3c, i3c_emul_api) = {
 	.do_ccc = i3c_emul_do_ccc,
 	.i3c_xfers = i3c_emul_xfers,
 	.i3c_device_find = i3c_emul_device_find,
+#ifdef CONFIG_I3C_CALLBACK
+	.do_ccc_cb = i3c_emul_do_ccc_cb,
+	.i3c_xfers_cb = i3c_emul_xfers_cb,
+#endif
 #ifdef CONFIG_I3C_USE_IBI
 	.ibi_enable = i3c_emul_ibi_enable,
 	.ibi_disable = i3c_emul_ibi_disable,
 	.ibi_hj_response = i3c_emul_ibi_hj_response,
 	.ibi_crr_response = i3c_emul_ibi_crr_response,
+#endif
+#ifdef CONFIG_I3C_RTIO
+	.iodev_submit = i3c_iodev_submit_fallback,
 #endif
 };
 
