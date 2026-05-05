@@ -15,7 +15,6 @@
 #include <zephyr/device.h>
 #include <zephyr/drivers/emul.h>
 #include <zephyr/drivers/i3c.h>
-#include <zephyr/sys/slist.h>
 #include <zephyr/types.h>
 
 /**
@@ -40,8 +39,6 @@ struct i3c_emul_api;
  * its devicetree node, then attaches via @ref i3c_emul_register.
  */
 struct i3c_emul {
-	sys_snode_t node;
-
 	/** Target emulator backing this bus node. REQUIRED. */
 	const struct emul *target;
 
@@ -98,8 +95,6 @@ struct i3c_emul {
  * emulated I3C bus (i.e. mixed-bus operation).
  */
 struct i3c_i2c_emul {
-	sys_snode_t node;
-
 	/** Target emulator backing this bus node. REQUIRED. */
 	const struct emul *target;
 

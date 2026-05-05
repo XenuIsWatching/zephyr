@@ -28,7 +28,7 @@ static const struct emul *target_a = EMUL_DT_GET(TARGET_A);
 
 static struct {
 	atomic_t calls;
-	uint8_t last_payload[8];
+	uint8_t last_payload[CONFIG_I3C_IBI_MAX_PAYLOAD_SIZE];
 	uint8_t last_payload_len;
 	struct i3c_device_desc *last_target;
 } g_ibi;

@@ -23,14 +23,11 @@ LOG_MODULE_REGISTER(i3c_emul_ctlr);
 #include <zephyr/drivers/i3c/ccc.h>
 #include <zephyr/drivers/i3c/ibi.h>
 #include <zephyr/drivers/i3c_emul.h>
-#include <zephyr/sys/slist.h>
 
 #include <string.h>
 
 struct i3c_emul_data {
 	struct i3c_driver_data common;
-	sys_slist_t emuls;
-	sys_slist_t i2c_emuls;
 #ifdef CONFIG_I3C_USE_IBI
 	bool ibi_hj_ack;
 	bool ibi_crr_ack;
@@ -44,42 +41,26 @@ struct i3c_emul_config {
 	uint32_t i2c_scl_hz;
 };
 
-static struct i3c_emul *i3c_emul_find_for_desc(const struct device *dev,
-					       const struct i3c_device_desc *desc)
+static struct i3c_emul *i3c_emul_for_desc(const struct i3c_device_desc *desc)
 {
-	struct i3c_emul_data *data = dev->data;
-	struct i3c_emul *emul;
-
-	SYS_SLIST_FOR_EACH_CONTAINER(&data->emuls, emul, node) {
-		if (emul->target != NULL && emul->target->dev == desc->dev) {
-			return emul;
-		}
+	if (desc == NULL) {
+		return NULL;
 	}
-
-	return NULL;
+	return (struct i3c_emul *)desc->controller_priv;
 }
 
 static struct i3c_emul *i3c_emul_find_by_addr(const struct device *dev, uint8_t addr,
 					      bool is_setdasa)
 {
-	struct i3c_emul_data *data = dev->data;
-	struct i3c_emul *emul;
+	struct i3c_device_desc *desc;
 
 	if (addr == 0U) {
 		return NULL;
 	}
 
-	SYS_SLIST_FOR_EACH_CONTAINER(&data->emuls, emul, node) {
-		if (is_setdasa) {
-			if (emul->static_addr == addr) {
-				return emul;
-			}
-		} else if (emul->dynamic_addr == addr) {
-			return emul;
-		}
-	}
-
-	return NULL;
+	desc = is_setdasa ? i3c_dev_list_i3c_static_addr_find(dev, addr)
+			  : i3c_dev_list_i3c_addr_find(dev, addr);
+	return i3c_emul_for_desc(desc);
 }
 
 static int i3c_emul_configure(const struct device *dev, enum i3c_config_type type, void *config)
@@ -116,10 +97,17 @@ static int i3c_emul_recover_bus(const struct device *dev)
 
 static int i3c_emul_attach_i3c_device(const struct device *dev, struct i3c_device_desc *target)
 {
-	struct i3c_emul *emul = i3c_emul_find_for_desc(dev, target);
+	struct i3c_emul *emul = i3c_emul_for_desc(target);
+
+	ARG_UNUSED(dev);
 
 	if (emul == NULL) {
-		LOG_DBG("%s: no peripheral emul for %s", dev->name, target->dev->name);
+		/*
+		 * controller_priv is filled in by i3c_emul_register, which
+		 * runs after i3c_addr_slots_init has issued the initial
+		 * attach. Subsequent attach calls (e.g. SETDASA reattach
+		 * helpers) carry the linkage already.
+		 */
 		return 0;
 	}
 
@@ -134,8 +122,9 @@ static int i3c_emul_attach_i3c_device(const struct device *dev, struct i3c_devic
 static int i3c_emul_reattach_i3c_device(const struct device *dev, struct i3c_device_desc *target,
 					uint8_t old_dyn_addr)
 {
-	struct i3c_emul *emul = i3c_emul_find_for_desc(dev, target);
+	struct i3c_emul *emul = i3c_emul_for_desc(target);
 
+	ARG_UNUSED(dev);
 	ARG_UNUSED(old_dyn_addr);
 
 	if (emul == NULL) {
@@ -153,7 +142,9 @@ static int i3c_emul_reattach_i3c_device(const struct device *dev, struct i3c_dev
 
 static int i3c_emul_detach_i3c_device(const struct device *dev, struct i3c_device_desc *target)
 {
-	struct i3c_emul *emul = i3c_emul_find_for_desc(dev, target);
+	struct i3c_emul *emul = i3c_emul_for_desc(target);
+
+	ARG_UNUSED(dev);
 
 	if (emul == NULL) {
 		return 0;
@@ -243,7 +234,7 @@ static int i3c_emul_do_daa(const struct device *dev)
 			continue;
 		}
 
-		emul = i3c_emul_find_for_desc(dev, desc);
+		emul = i3c_emul_for_desc(desc);
 		if (emul == NULL) {
 			continue;
 		}
@@ -275,42 +266,19 @@ static int i3c_emul_do_ccc_one(struct i3c_emul *emul, struct i3c_ccc_payload *pa
 	return emul->api->do_ccc(emul->target, payload, is_broadcast);
 }
 
-static void i3c_emul_post_ccc_update(const struct device *dev, struct i3c_ccc_payload *payload,
+static void i3c_emul_post_ccc_update(struct i3c_ccc_payload *payload,
 				     struct i3c_ccc_target_payload *tp, struct i3c_emul *emul)
 {
-	struct i3c_emul_data *data = dev->data;
-	struct i3c_addr_slots *slots = &data->common.attached_dev.addr_slots;
-	struct i3c_device_desc *desc = i3c_dev_list_i3c_addr_find(dev, tp->addr);
 	uint8_t new_addr;
 
 	switch (payload->ccc.id) {
 	case I3C_CCC_SETDASA:
-		if (tp->data == NULL || tp->data_len < 1U) {
-			return;
-		}
-		new_addr = tp->data[0] >> 1;
-		if (desc != NULL) {
-			i3c_addr_slots_mark_free(slots, desc->dynamic_addr);
-			desc->dynamic_addr = new_addr;
-		}
-		emul->dynamic_addr = new_addr;
-		i3c_addr_slots_mark_i3c(slots, new_addr);
-		if (emul->api->set_dynamic_addr != NULL) {
-			(void)emul->api->set_dynamic_addr(emul->target, new_addr);
-		}
-		break;
 	case I3C_CCC_SETNEWDA:
 		if (tp->data == NULL || tp->data_len < 1U) {
 			return;
 		}
 		new_addr = tp->data[0] >> 1;
-		if (desc != NULL) {
-			i3c_addr_slots_mark_free(slots, desc->dynamic_addr);
-			desc->dynamic_addr = new_addr;
-		}
-		i3c_addr_slots_mark_free(slots, emul->dynamic_addr);
 		emul->dynamic_addr = new_addr;
-		i3c_addr_slots_mark_i3c(slots, new_addr);
 		if (emul->api->set_dynamic_addr != NULL) {
 			(void)emul->api->set_dynamic_addr(emul->target, new_addr);
 		}
@@ -322,16 +290,14 @@ static void i3c_emul_post_ccc_update(const struct device *dev, struct i3c_ccc_pa
 
 static int i3c_emul_do_ccc_broadcast(const struct device *dev, struct i3c_ccc_payload *payload)
 {
-	struct i3c_emul_data *data = dev->data;
-	struct i3c_addr_slots *slots = &data->common.attached_dev.addr_slots;
-	struct i3c_emul *emul;
-	struct i3c_emul *emul_safe;
+	struct i3c_device_desc *desc;
 	int ret = 0;
 
-	SYS_SLIST_FOR_EACH_CONTAINER(&data->emuls, emul, node) {
+	I3C_BUS_FOR_EACH_I3CDEV(dev, desc) {
+		struct i3c_emul *emul = i3c_emul_for_desc(desc);
 		int rc;
 
-		if (emul->target == NULL || emul->api == NULL) {
+		if (emul == NULL || emul->api == NULL) {
 			continue;
 		}
 
@@ -342,15 +308,18 @@ static int i3c_emul_do_ccc_broadcast(const struct device *dev, struct i3c_ccc_pa
 	}
 
 	if (payload->ccc.id == I3C_CCC_RSTDAA) {
-		struct i3c_device_desc *desc;
-
+		/*
+		 * Per-target peripheral mirror cleanup. Controller-side state
+		 * (desc->dynamic_addr, address-slot map) is reset by
+		 * i3c_bus_rstdaa_all() in drivers/i3c/i3c_common.c.
+		 */
 		I3C_BUS_FOR_EACH_I3CDEV(dev, desc) {
-			if (desc->dynamic_addr != 0U) {
-				i3c_addr_slots_mark_free(slots, desc->dynamic_addr);
-				desc->dynamic_addr = 0U;
+			struct i3c_emul *emul = i3c_emul_for_desc(desc);
+
+			if (emul == NULL) {
+				continue;
 			}
-		}
-		SYS_SLIST_FOR_EACH_CONTAINER_SAFE(&data->emuls, emul, emul_safe, node) {
+
 			emul->dynamic_addr = 0U;
 #ifdef CONFIG_I3C_USE_IBI
 			emul->ibi_enabled = false;
@@ -386,7 +355,7 @@ static int i3c_emul_do_ccc_direct(const struct device *dev, struct i3c_ccc_paylo
 
 		rc = i3c_emul_do_ccc_one(emul, payload, false);
 		if (rc == 0) {
-			i3c_emul_post_ccc_update(dev, payload, tp, emul);
+			i3c_emul_post_ccc_update(payload, tp, emul);
 		} else if (ret == 0) {
 			ret = rc;
 		}
@@ -532,10 +501,22 @@ static int i3c_emul_i2c_api_transfer(const struct device *dev, struct i2c_msg *m
 
 int i3c_emul_register(const struct device *dev, struct i3c_emul *emul)
 {
-	struct i3c_emul_data *data = dev->data;
+	struct i3c_device_desc *desc;
 
 	emul->bus = dev;
-	sys_slist_append(&data->emuls, &emul->node);
+
+	/*
+	 * Link the peripheral emulator to the matching i3c_device_desc via
+	 * controller_priv so the bus emulator can dispatch using the standard
+	 * I3C_BUS_FOR_EACH_I3CDEV iteration without keeping its own list.
+	 */
+	I3C_BUS_FOR_EACH_I3CDEV(dev, desc) {
+		if (desc->dev == emul->target->dev) {
+			desc->controller_priv = emul;
+			break;
+		}
+	}
+
 	LOG_INF("%s: register I3C emul '%s' (sa=0x%02x, pid=0x%012llx)", dev->name,
 		emul->target->dev->name, emul->static_addr, (unsigned long long)emul->pid);
 
@@ -544,9 +525,15 @@ int i3c_emul_register(const struct device *dev, struct i3c_emul *emul)
 
 int i3c_emul_i2c_register(const struct device *dev, struct i3c_i2c_emul *emul)
 {
-	struct i3c_emul_data *data = dev->data;
+	struct i3c_i2c_device_desc *desc;
 
-	sys_slist_append(&data->i2c_emuls, &emul->node);
+	I3C_BUS_FOR_EACH_I2CDEV(dev, desc) {
+		if (desc->addr == emul->addr) {
+			desc->controller_priv = emul;
+			break;
+		}
+	}
+
 	LOG_INF("%s: register I2C-on-I3C emul '%s' (addr=0x%02x)", dev->name,
 		emul->target->dev->name, emul->addr);
 
@@ -678,18 +665,21 @@ static int i3c_emul_init(const struct device *dev)
 	struct i3c_emul_data *data = dev->data;
 	int ret;
 
-	sys_slist_init(&data->emuls);
-	sys_slist_init(&data->i2c_emuls);
-
 	data->common.ctrl_config.scl.i3c = cfg->i3c_scl_hz;
 	data->common.ctrl_config.scl.i2c = cfg->i2c_scl_hz;
 
-	ret = emul_init_for_bus_from_list(dev, &cfg->emul_list);
+	/*
+	 * Attach all DT-listed targets first so the standard I3C device list
+	 * is populated, then walk EMUL_DT_DEFINE peripherals so each
+	 * i3c_emul_register can link itself into the matching desc via
+	 * desc->controller_priv.
+	 */
+	ret = i3c_addr_slots_init(dev);
 	if (ret != 0) {
 		return ret;
 	}
 
-	ret = i3c_addr_slots_init(dev);
+	ret = emul_init_for_bus_from_list(dev, &cfg->emul_list);
 	if (ret != 0) {
 		return ret;
 	}
