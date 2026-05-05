@@ -35,6 +35,7 @@ struct i3c_emul_data {
 #endif
 #ifdef CONFIG_I3C_TARGET
 	struct i3c_target_config *target_cfg;
+	struct i3c_config_target target_config;
 	bool handoff_accept;
 #if CONFIG_I3C_EMUL_TARGET_TX_FIFO_SIZE > 0
 	uint8_t tx_fifo[CONFIG_I3C_EMUL_TARGET_TX_FIFO_SIZE];
@@ -77,26 +78,38 @@ static int i3c_emul_configure(const struct device *dev, enum i3c_config_type typ
 {
 	struct i3c_emul_data *data = dev->data;
 
-	if (type != I3C_CONFIG_CONTROLLER) {
+	switch (type) {
+	case I3C_CONFIG_CONTROLLER:
+		(void)memcpy(&data->common.ctrl_config, config,
+			     sizeof(data->common.ctrl_config));
+		return 0;
+#ifdef CONFIG_I3C_TARGET
+	case I3C_CONFIG_TARGET:
+		(void)memcpy(&data->target_config, config, sizeof(data->target_config));
+		return 0;
+#endif
+	default:
 		return -ENOTSUP;
 	}
-
-	(void)memcpy(&data->common.ctrl_config, config, sizeof(data->common.ctrl_config));
-
-	return 0;
 }
 
 static int i3c_emul_config_get(const struct device *dev, enum i3c_config_type type, void *config)
 {
 	struct i3c_emul_data *data = dev->data;
 
-	if (type != I3C_CONFIG_CONTROLLER) {
+	switch (type) {
+	case I3C_CONFIG_CONTROLLER:
+		(void)memcpy(config, &data->common.ctrl_config,
+			     sizeof(data->common.ctrl_config));
+		return 0;
+#ifdef CONFIG_I3C_TARGET
+	case I3C_CONFIG_TARGET:
+		(void)memcpy(config, &data->target_config, sizeof(data->target_config));
+		return 0;
+#endif
+	default:
 		return -ENOTSUP;
 	}
-
-	(void)memcpy(config, &data->common.ctrl_config, sizeof(data->common.ctrl_config));
-
-	return 0;
 }
 
 static int i3c_emul_recover_bus(const struct device *dev)

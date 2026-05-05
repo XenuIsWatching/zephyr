@@ -3,8 +3,12 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Tiny synthetic I3C peripheral emulator used by the M2 i3c_emul ztest. Will
- * be replaced (or supplemented) by the full reference peripheral in M6.
+ * Synthetic I3C peripheral emulator used by the i3c_emul ztest. Implements
+ * the full struct i3c_emul_api surface that M2-M5 wire up: private xfers,
+ * direct/broadcast CCC responders (GETPID/GETBCR/GETDCR/GETSTATUS/GETMXDS,
+ * SETMRL/GETMRL/SETMWL/GETMWL, DEFTGTS capture, SETDASA/SETNEWDA/RSTDAA
+ * acks), set_dynamic_addr, ibi_enable/disable, and a backend trigger API
+ * for tests.
  */
 
 #define DT_DRV_COMPAT zephyr_i3c_emul_test_target
@@ -23,6 +27,13 @@
 
 #define TEST_TARGET_REG_SIZE 32U
 
+/* Capacity for a captured DEFTGTS payload: 1 byte count + active-controller
+ * descriptor + a handful of target descriptors. The real subsys CCC bytes
+ * are tightly packed, this just needs to be a generous upper bound for
+ * reasonable test bus topologies.
+ */
+#define TEST_TARGET_DEFTGTS_BUF_SIZE 128U
+
 struct test_target_cfg {
 	uint64_t pid;
 	uint8_t bcr;
@@ -34,6 +45,19 @@ struct test_target_data {
 	uint8_t cursor;
 	uint8_t dyn_addr;
 	bool ibi_enabled_seen;
+
+	/* MRL / MWL state set via SETMRL / SETMWL, returned via GETMRL / GETMWL. */
+	uint16_t mrl;
+	uint16_t mwl;
+	uint8_t mrl_ibi_len;
+
+	/* GETSTATUS Format 1 value (test-poke-able for status tests). */
+	uint16_t status_fmt1;
+
+	/* Last DEFTGTS broadcast we observed. Captured for test inspection. */
+	uint8_t deftgts_buf[TEST_TARGET_DEFTGTS_BUF_SIZE];
+	size_t deftgts_len;
+	bool deftgts_seen;
 };
 
 static int test_target_xfers(const struct emul *target, struct i3c_msg *msgs, uint8_t num_msgs)
@@ -85,6 +109,7 @@ static int test_target_do_ccc(const struct emul *target, struct i3c_ccc_payload 
 	}
 
 	switch (payload->ccc.id) {
+	/* --- Direct GET CCCs --- */
 	case I3C_CCC_GETPID:
 		if (tp != NULL && tp->data != NULL && tp->data_len >= 6U) {
 			sys_put_be48(cfg->pid, tp->data);
@@ -103,6 +128,73 @@ static int test_target_do_ccc(const struct emul *target, struct i3c_ccc_payload 
 			tp->num_xfer = 1U;
 		}
 		return 0;
+	case I3C_CCC_GETMRL:
+		if (tp != NULL && tp->data != NULL && tp->data_len >= 2U) {
+			sys_put_be16(data->mrl, tp->data);
+			tp->num_xfer = 2U;
+			if (tp->data_len >= 3U) {
+				tp->data[2] = data->mrl_ibi_len;
+				tp->num_xfer = 3U;
+			}
+		}
+		return 0;
+	case I3C_CCC_GETMWL:
+		if (tp != NULL && tp->data != NULL && tp->data_len >= 2U) {
+			sys_put_be16(data->mwl, tp->data);
+			tp->num_xfer = 2U;
+		}
+		return 0;
+	case I3C_CCC_GETSTATUS:
+		if (tp != NULL && tp->data != NULL && tp->data_len >= 2U) {
+			sys_put_be16(data->status_fmt1, tp->data);
+			tp->num_xfer = 2U;
+		}
+		return 0;
+
+	/* --- Direct SET CCCs --- */
+	case I3C_CCC_SETMRL(false):
+		if (tp != NULL && tp->data != NULL && tp->data_len >= 2U) {
+			data->mrl = sys_get_be16(tp->data);
+			if (tp->data_len >= 3U) {
+				data->mrl_ibi_len = tp->data[2];
+			}
+			tp->num_xfer = tp->data_len;
+		}
+		return 0;
+	case I3C_CCC_SETMWL(false):
+		if (tp != NULL && tp->data != NULL && tp->data_len >= 2U) {
+			data->mwl = sys_get_be16(tp->data);
+			tp->num_xfer = 2U;
+		}
+		return 0;
+
+	/* --- Broadcast SETMRL/SETMWL apply to every target --- */
+	case I3C_CCC_SETMRL(true):
+		if (payload->ccc.data != NULL && payload->ccc.data_len >= 2U) {
+			data->mrl = sys_get_be16(payload->ccc.data);
+			if (payload->ccc.data_len >= 3U) {
+				data->mrl_ibi_len = payload->ccc.data[2];
+			}
+		}
+		return 0;
+	case I3C_CCC_SETMWL(true):
+		if (payload->ccc.data != NULL && payload->ccc.data_len >= 2U) {
+			data->mwl = sys_get_be16(payload->ccc.data);
+		}
+		return 0;
+
+	/* --- DEFTGTS broadcast: capture payload bytes for test inspection. --- */
+	case I3C_CCC_DEFTGTS:
+		if (payload->ccc.data != NULL && payload->ccc.data_len > 0U) {
+			size_t copy = MIN(payload->ccc.data_len, sizeof(data->deftgts_buf));
+
+			memcpy(data->deftgts_buf, payload->ccc.data, copy);
+			data->deftgts_len = copy;
+			data->deftgts_seen = true;
+		}
+		return 0;
+
+	/* --- DAA-related: ack, bus emulator handles state. --- */
 	case I3C_CCC_SETDASA:
 	case I3C_CCC_SETNEWDA:
 	case I3C_CCC_RSTDAA:
@@ -190,6 +282,53 @@ bool test_target_ibi_was_enabled(const struct emul *target)
 	return data->ibi_enabled_seen;
 }
 
+void test_target_set_status_fmt1(const struct emul *target, uint16_t status)
+{
+	struct test_target_data *data = target->data;
+
+	data->status_fmt1 = status;
+}
+
+uint16_t test_target_get_mrl(const struct emul *target)
+{
+	struct test_target_data *data = target->data;
+
+	return data->mrl;
+}
+
+uint16_t test_target_get_mwl(const struct emul *target)
+{
+	struct test_target_data *data = target->data;
+
+	return data->mwl;
+}
+
+bool test_target_deftgts_was_seen(const struct emul *target)
+{
+	struct test_target_data *data = target->data;
+
+	return data->deftgts_seen;
+}
+
+size_t test_target_get_deftgts(const struct emul *target, uint8_t *out, size_t out_len)
+{
+	struct test_target_data *data = target->data;
+	size_t copy = MIN(out_len, data->deftgts_len);
+
+	if (copy > 0U) {
+		memcpy(out, data->deftgts_buf, copy);
+	}
+	return copy;
+}
+
+void test_target_clear_deftgts(const struct emul *target)
+{
+	struct test_target_data *data = target->data;
+
+	data->deftgts_len = 0;
+	data->deftgts_seen = false;
+}
+
 static const struct test_target_backend_api test_target_backend = {
 	.get_reg = test_target_get_reg,
 	.set_reg = test_target_set_reg,
@@ -199,6 +338,12 @@ static const struct test_target_backend_api test_target_backend = {
 	.trigger_hj = test_target_trigger_hj,
 	.trigger_crr = test_target_trigger_crr,
 	.ibi_was_enabled = test_target_ibi_was_enabled,
+	.set_status_fmt1 = test_target_set_status_fmt1,
+	.get_mrl = test_target_get_mrl,
+	.get_mwl = test_target_get_mwl,
+	.deftgts_was_seen = test_target_deftgts_was_seen,
+	.get_deftgts = test_target_get_deftgts,
+	.clear_deftgts = test_target_clear_deftgts,
 };
 
 static int test_target_init(const struct emul *target, const struct device *parent)
