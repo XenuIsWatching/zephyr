@@ -31,6 +31,7 @@ static struct {
 	uint8_t last_payload[CONFIG_I3C_IBI_MAX_PAYLOAD_SIZE];
 	uint8_t last_payload_len;
 	struct i3c_device_desc *last_target;
+	struct k_sem fired;
 } g_ibi;
 
 static int test_ibi_cb(struct i3c_device_desc *target, struct i3c_ibi_payload *payload)
@@ -45,6 +46,7 @@ static int test_ibi_cb(struct i3c_device_desc *target, struct i3c_ibi_payload *p
 	} else {
 		g_ibi.last_payload_len = 0;
 	}
+	k_sem_give(&g_ibi.fired);
 	return 0;
 }
 
@@ -66,6 +68,7 @@ static void *i3c_emul_ibi_setup(void)
 		zassert_ok(rc, "SETDASA failed: %d", rc);
 	}
 	desc->ibi_cb = test_ibi_cb;
+	k_sem_init(&g_ibi.fired, 0, 1);
 	return NULL;
 }
 
@@ -76,6 +79,7 @@ static void i3c_emul_ibi_before(void *fixture)
 	g_ibi.last_payload_len = 0;
 	g_ibi.last_target = NULL;
 	memset(g_ibi.last_payload, 0, sizeof(g_ibi.last_payload));
+	k_sem_reset(&g_ibi.fired);
 	(void)i3c_ibi_hj_response(bus, false);
 }
 
@@ -102,9 +106,14 @@ ZTEST(i3c_emul_ibi, test_ibi_enabled_delivers_payload)
 	rc = test_target_trigger_ibi(target_a, payload, sizeof(payload));
 	zassert_ok(rc, "trigger_ibi: %d", rc);
 
-#ifdef CONFIG_I3C_IBI_WORKQUEUE
-	k_msleep(50);
-#endif
+	/*
+	 * Sync mode: the callback fires inline before trigger_ibi returns,
+	 * so the sem is already given. Workqueue mode: the IBI is enqueued
+	 * and the callback runs from i3c_ibi_workq; pend on the sem until
+	 * the callback signals it.
+	 */
+	zassert_ok(k_sem_take(&g_ibi.fired, K_MSEC(100)),
+		   "ibi_cb did not fire within 100ms");
 
 	zassert_equal(atomic_get(&g_ibi.calls), 1, "callback fired once");
 	zassert_equal(g_ibi.last_target, desc, "callback target matches");

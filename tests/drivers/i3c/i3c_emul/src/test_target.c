@@ -389,8 +389,25 @@ ZTEST(i3c_emul_target, test_handoff_completes_and_sec_handoffed_repopulates_bus)
 
 	zassert_equal(atomic_get(&g.handoff), 1, "controller_handoff_cb fired");
 
-	/* Drain the IBI workqueue so i3c_sec_handoffed runs. */
-	k_sleep(K_MSEC(100));
+	/*
+	 * Wait for the IBI workqueue to run i3c_sec_handoffed and re-attach
+	 * descs from DEFTGTS. Poll the bus list for the first desc whose
+	 * controller_priv is non-NULL — that's the observable condition,
+	 * no arbitrary sleep needed.
+	 */
+	bool any_relinked = false;
+
+	zassert_true(WAIT_FOR(({
+		any_relinked = false;
+		I3C_BUS_FOR_EACH_I3CDEV(bus, desc) {
+			if (desc->controller_priv != NULL) {
+				any_relinked = true;
+				break;
+			}
+		}
+		any_relinked;
+	}), USEC_PER_MSEC * 100, k_msleep(1)),
+		     "i3c_sec_handoffed did not re-attach within 100ms");
 
 	n_attached = 0;
 	I3C_BUS_FOR_EACH_I3CDEV(bus, desc) {
