@@ -210,13 +210,6 @@ static int i3c_emul_attach_i3c_device(const struct device *dev, struct i3c_devic
 	return 0;
 }
 
-static int i3c_emul_attach_i2c_device(const struct device *dev,
-				      struct i3c_i2c_device_desc *target)
-{
-	target->controller_priv = i3c_emul_lookup_i2c_by_addr(dev, target->addr);
-	return 0;
-}
-
 static int i3c_emul_detach_i3c_device(const struct device *dev, struct i3c_device_desc *target)
 {
 	ARG_UNUSED(dev);
@@ -233,6 +226,21 @@ static int i3c_emul_detach_i3c_device(const struct device *dev, struct i3c_devic
 	 * i3c_sec_handoffed reading DEFTGTS) gets a clean slate and can
 	 * re-link the peripheral by walking on dynamic address.
 	 */
+	target->controller_priv = NULL;
+	return 0;
+}
+
+static int i3c_emul_attach_i2c_device(const struct device *dev,
+				      struct i3c_i2c_device_desc *target)
+{
+	target->controller_priv = i3c_emul_lookup_i2c_by_addr(dev, target->addr);
+	return 0;
+}
+
+static int i3c_emul_detach_i2c_device(const struct device *dev,
+				      struct i3c_i2c_device_desc *target)
+{
+	ARG_UNUSED(dev);
 	target->controller_priv = NULL;
 	return 0;
 }
@@ -1041,6 +1049,7 @@ DEVICE_API(i3c, i3c_emul_api) = {
 	.attach_i3c_device = i3c_emul_attach_i3c_device,
 	.detach_i3c_device = i3c_emul_detach_i3c_device,
 	.attach_i2c_device = i3c_emul_attach_i2c_device,
+	.detach_i2c_device = i3c_emul_detach_i2c_device,
 	.do_daa = i3c_emul_do_daa,
 	.do_ccc = i3c_emul_do_ccc,
 	.i3c_xfers = i3c_emul_xfers,
