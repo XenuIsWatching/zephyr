@@ -9,6 +9,7 @@
 
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/emul.h>
+#include <zephyr/drivers/i2c.h>
 #include <zephyr/drivers/i3c.h>
 #include <zephyr/drivers/i3c/ccc.h>
 #include <zephyr/drivers/i3c_emul.h>
@@ -16,11 +17,13 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/ztest.h>
 
+#include "i2c_test_target_emul.h"
 #include "test_target_emul.h"
 
 #define I3C_BUS DT_NODELABEL(i3c0)
 #define TARGET_A DT_NODELABEL(test_target_a)
 #define TARGET_B DT_NODELABEL(test_target_b)
+#define TARGET_I2C DT_NODELABEL(test_i2c_target)
 
 #define TARGET_A_PID		TEST_TARGET_A_PID
 #define TARGET_B_PID		TEST_TARGET_B_PID
@@ -122,6 +125,35 @@ ZTEST(i3c_emul_core, test_mock_api_returns_eio)
 	zassert_equal(rc, -EIO, "expected mock to return -EIO, got %d", rc);
 
 	test_target_install_mock(target_a, NULL);
+}
+
+ZTEST(i3c_emul_core, test_legacy_i2c_on_i3c_routes_via_i2c_api)
+{
+	const struct emul *i2c_target = EMUL_DT_GET(TARGET_I2C);
+	const uint16_t i2c_addr = DT_PROP_BY_IDX(TARGET_I2C, reg, 0);
+	uint8_t write_buf[3] = {0x00, 0x77, 0x88};
+	uint8_t read_buf[2] = {0};
+	uint8_t cursor = 0;
+	int rc;
+
+	/*
+	 * Drive the bus's i2c_api.transfer at a legacy-i2c-on-i3c address.
+	 * The peripheral implements struct i2c_emul_api the same way every
+	 * in-tree i2c sensor emul does, so this proves an existing i2c
+	 * sensor emul could be reparented under our i3c emul controller
+	 * without sensor-side changes.
+	 */
+	rc = i2c_write(bus, write_buf, sizeof(write_buf), i2c_addr);
+	zassert_ok(rc, "i2c_write failed: %d", rc);
+	zassert_equal(i2c_test_target_get_reg(i2c_target, 0), write_buf[1], "reg[0]");
+	zassert_equal(i2c_test_target_get_reg(i2c_target, 1), write_buf[2], "reg[1]");
+
+	rc = i2c_write(bus, &cursor, sizeof(cursor), i2c_addr);
+	zassert_ok(rc, "i2c_write seek: %d", rc);
+	rc = i2c_read(bus, read_buf, sizeof(read_buf), i2c_addr);
+	zassert_ok(rc, "i2c_read: %d", rc);
+	zassert_equal(read_buf[0], write_buf[1], "read[0]");
+	zassert_equal(read_buf[1], write_buf[2], "read[1]");
 }
 
 static void *i3c_emul_setup(void)

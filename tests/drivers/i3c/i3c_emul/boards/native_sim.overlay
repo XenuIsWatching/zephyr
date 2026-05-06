@@ -28,5 +28,17 @@
 			bcr = <0x00>;
 			dcr = <0x6c>;
 		};
+
+		/*
+		 * Legacy-I2C-on-I3C peripheral. reg = <addr 0 lvr> per the
+		 * i3c subsystem's i2c-device convention; the bus emulator
+		 * routes its i2c_api.transfer to this node's standard
+		 * struct i2c_emul, same as an i2c sensor emul would under
+		 * a zephyr,i2c-emul-controller parent.
+		 */
+		test_i2c_target: i2c-target@2a000000 {
+			compatible = "zephyr,i2c-on-i3c-emul-test-target";
+			reg = <0x2A 0x00 0x00>;
+		};
 	};
 };

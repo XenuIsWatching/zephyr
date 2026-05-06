@@ -9,6 +9,7 @@ target_sources(app PRIVATE
     src/test_core.c
     src/test_ccc.c
     src/test_target_emul.c
+    src/i2c_test_target_emul.c
 )
 target_sources_ifdef(CONFIG_I3C_USE_IBI app PRIVATE src/test_ibi.c)
 target_sources_ifdef(CONFIG_I3C_CALLBACK app PRIVATE src/test_async.c)

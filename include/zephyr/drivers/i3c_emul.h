@@ -91,24 +91,6 @@ struct i3c_emul {
 };
 
 /**
- * Node in a linked list of legacy I2C target emulators attached to an
- * emulated I3C bus (i.e. mixed-bus operation).
- */
-struct i3c_i2c_emul {
-	/** Target emulator backing this bus node. REQUIRED. */
-	const struct emul *target;
-
-	/** API provided by the peripheral emulator. */
-	const struct i3c_emul_api *api;
-
-	/** 7-bit I2C address. */
-	uint16_t addr;
-
-	/** Legacy Virtual Register (LVR). */
-	uint8_t lvr;
-};
-
-/**
  * Issue private SDR (or HDR) read/write transfers to a target emulator.
  *
  * @param target  The peripheral emulator instance.
@@ -190,14 +172,35 @@ struct i3c_emul_api {
 int i3c_emul_register(const struct device *dev, struct i3c_emul *emul);
 
 /**
- * Register a legacy I2C target on the emulated I3C bus (mixed-bus operation).
+ * Register a legacy-I2C-on-I3C peripheral with the bus emulator.
  *
- * @param dev  The bus emulator device.
- * @param emul The peripheral's @ref i3c_i2c_emul node.
+ * I2C devices on an I3C bus are described in devicetree with
+ * @c reg = <addr 0 lvr> (mid cell zero). The emul framework allocates
+ * a standard @c struct i2c_emul for them, so existing i2c sensor
+ * emulators (BMI160, AKM09918C, ...) register here unmodified when
+ * their devicetree node is reparented from a
+ * @c zephyr,i2c-emul-controller to a @c zephyr,i3c-emul-controller.
+ *
+ * Typically invoked from @c emul_init_for_bus_from_list when the bus
+ * emulator detects an i3c parent with an i2c-typed child emul.
+ *
+ * @param dev  The i3c bus emulator device.
+ * @param emul The peripheral's @c i2c_emul node.
  *
  * @retval 0 always.
  */
-int i3c_emul_i2c_register(const struct device *dev, struct i3c_i2c_emul *emul);
+struct i2c_emul;
+int i3c_emul_register_i2c(const struct device *dev, struct i2c_emul *emul);
+
+/**
+ * @return true if and only if @p dev is a @c zephyr,i3c-emul-controller
+ *         instance.
+ *
+ * Helper for the shared emul framework so it can route i2c-typed
+ * peripherals on an i3c bus to @ref i3c_emul_register_i2c instead of
+ * the i2c controller's own register hook.
+ */
+bool i3c_emul_is_bus(const struct device *dev);
 
 /**
  * Inject an in-band interrupt (IBI) from a peripheral emulator into the bus.

@@ -18,6 +18,7 @@ LOG_MODULE_REGISTER(i3c_emul_ctlr);
 #include <zephyr/device.h>
 #include <zephyr/drivers/emul.h>
 #include <zephyr/drivers/i2c.h>
+#include <zephyr/drivers/i2c_emul.h>
 #include <zephyr/drivers/i3c.h>
 #include <zephyr/drivers/i3c/addresses.h>
 #include <zephyr/drivers/i3c/ccc.h>
@@ -29,6 +30,7 @@ LOG_MODULE_REGISTER(i3c_emul_ctlr);
 
 struct i3c_emul_data {
 	struct i3c_driver_data common;
+	sys_slist_t i2c_emuls;
 #ifdef CONFIG_I3C_USE_IBI
 	bool ibi_hj_ack;
 	bool ibi_crr_ack;
@@ -773,11 +775,30 @@ static int i3c_emul_i2c_api_configure(const struct device *dev, uint32_t dev_con
 static int i3c_emul_i2c_api_transfer(const struct device *dev, struct i2c_msg *msgs,
 				     uint8_t num_msgs, uint16_t addr)
 {
-	ARG_UNUSED(dev);
-	ARG_UNUSED(msgs);
-	ARG_UNUSED(num_msgs);
-	ARG_UNUSED(addr);
-	return -ENOSYS;
+	struct i3c_emul_data *data = dev->data;
+	struct i2c_emul *emul;
+
+	if (msgs == NULL || num_msgs == 0U) {
+		return 0;
+	}
+
+	SYS_SLIST_FOR_EACH_CONTAINER(&data->i2c_emuls, emul, node) {
+		if (emul->addr == addr) {
+			__ASSERT_NO_MSG(emul->api != NULL);
+			__ASSERT_NO_MSG(emul->api->transfer != NULL);
+			if (emul->mock_api != NULL && emul->mock_api->transfer != NULL) {
+				int rc = emul->mock_api->transfer(emul->target, msgs,
+								  num_msgs, addr);
+
+				if (rc != -ENOSYS) {
+					return rc;
+				}
+			}
+			return emul->api->transfer(emul->target, msgs, num_msgs, addr);
+		}
+	}
+
+	return -EIO;
 }
 
 int i3c_emul_register(const struct device *dev, struct i3c_emul *emul)
@@ -796,9 +817,12 @@ int i3c_emul_register(const struct device *dev, struct i3c_emul *emul)
 	return 0;
 }
 
-int i3c_emul_i2c_register(const struct device *dev, struct i3c_i2c_emul *emul)
+int i3c_emul_register_i2c(const struct device *dev, struct i2c_emul *emul)
 {
+	struct i3c_emul_data *data = dev->data;
 	struct i3c_i2c_device_desc *desc;
+
+	sys_slist_append(&data->i2c_emuls, &emul->node);
 
 	I3C_BUS_FOR_EACH_I2CDEV(dev, desc) {
 		if (desc->addr == emul->addr) {
@@ -807,10 +831,17 @@ int i3c_emul_i2c_register(const struct device *dev, struct i3c_i2c_emul *emul)
 		}
 	}
 
-	LOG_INF("%s: register I2C-on-I3C emul '%s' (addr=0x%02x)", dev->name,
+	LOG_INF("%s: register legacy-i2c-on-i3c emul '%s' (addr=0x%02x)", dev->name,
 		emul->target->dev->name, emul->addr);
 
 	return 0;
+}
+
+bool i3c_emul_is_bus(const struct device *dev)
+{
+	extern const struct i3c_driver_api i3c_emul_api;
+
+	return dev != NULL && dev->api == &i3c_emul_api;
 }
 
 int i3c_emul_target_raise_ibi(const struct emul *target, uint8_t *payload, uint8_t payload_len)
@@ -951,6 +982,8 @@ static int i3c_emul_init(const struct device *dev)
 	data->common.ctrl_config.scl.i3c = cfg->i3c_scl_hz;
 	data->common.ctrl_config.scl.i2c = cfg->i2c_scl_hz;
 
+	sys_slist_init(&data->i2c_emuls);
+
 	/*
 	 * Register peripheral emuls first so they set their per-emul ->bus
 	 * pointer. Then run i3c_addr_slots_init: it calls
@@ -979,7 +1012,7 @@ static int i3c_emul_init(const struct device *dev)
 	return ret;
 }
 
-static DEVICE_API(i3c, i3c_emul_api) = {
+DEVICE_API(i3c, i3c_emul_api) = {
 	.i2c_api = {
 		.configure = i3c_emul_i2c_api_configure,
 		.transfer = i3c_emul_i2c_api_transfer,

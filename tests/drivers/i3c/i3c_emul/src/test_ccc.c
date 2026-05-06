@@ -178,9 +178,10 @@ ZTEST(i3c_emul_ccc, test_deftgts_broadcast_reaches_peripherals)
 	 *   then count * sizeof(target descriptor)
 	 *
 	 * count must be the number of attached I3C + I2C devices on this
-	 * bus, which for the test overlay is 2 (target_a + target_b).
+	 * bus. The test overlay declares two I3C targets (A and B) plus
+	 * one legacy-I2C-on-I3C target, so count is 3.
 	 */
-	zassert_equal(buf[0], 2U, "DEFTGTS count = num attached, got %u", buf[0]);
+	zassert_equal(buf[0], 3U, "DEFTGTS count = num attached, got %u", buf[0]);
 }
 
 ZTEST_SUITE(i3c_emul_ccc, NULL, ccc_setup, ccc_before, NULL, NULL);

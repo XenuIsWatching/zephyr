@@ -119,9 +119,24 @@ struct emul {
  */
 #define Z_EMUL_REG_BUS_IDENTIFIER(_dev_node_id) _CONCAT(_CONCAT(__emulreg_, _dev_node_id), _bus)
 
+/*
+ * For i3c-parented peripherals, the I3C devicetree convention encodes
+ * legacy I2C devices as reg = <addr 0 lvr> (mid cell zero) and I3C
+ * devices as reg = <static_addr pid_hi pid_lo> with pid_hi nonzero.
+ * Distinguish them so a sensor wired up via the standard i2c emul
+ * EMUL_DT_DEFINE shape (struct i2c_emul_api in bus_api) can sit
+ * unmodified under either an i2c-emul-controller or an
+ * i3c-emul-controller parent.
+ */
+#define Z_EMUL_NODE_IS_LEGACY_I2C(_node_id)                                                        \
+	UTIL_AND(DT_ON_BUS(_node_id, i3c),                                                         \
+		 UTIL_AND(DT_NODE_HAS_PROP(_node_id, reg),                                         \
+			  IS_EQ(DT_PROP_BY_IDX(_node_id, reg, 1), 0)))
+
 /* Conditionally places text based on what bus _dev_node_id is on. */
 #define Z_EMUL_BUS(_dev_node_id, _i2c, _i3c, _espi, _spi, _mspi, _uart, _none)                     \
-	COND_CASE_1(DT_ON_BUS(_dev_node_id, i3c), (_i3c),                                          \
+	COND_CASE_1(Z_EMUL_NODE_IS_LEGACY_I2C(_dev_node_id), (_i2c),                               \
+		    DT_ON_BUS(_dev_node_id, i3c), (_i3c),                                          \
 		    DT_ON_BUS(_dev_node_id, i2c), (_i2c),                                          \
 		    DT_ON_BUS(_dev_node_id, espi), (_espi),                                        \
 		    DT_ON_BUS(_dev_node_id, spi), (_spi),                                          \
@@ -151,7 +166,7 @@ struct emul {
 		IF_ENABLED(DT_NODE_HAS_PROP(node_id, reg),                                         \
 			   (.Z_EMUL_BUS(node_id, addr, static_addr, chipsel, chipsel, dev_idx,     \
 					dummy, addr) =                                             \
-				    Z_EMUL_BUS(node_id, DT_REG_ADDR(node_id),                      \
+				    Z_EMUL_BUS(node_id, DT_PROP_BY_IDX(node_id, reg, 0),           \
 					       DT_PROP_BY_IDX(node_id, reg, 0),                    \
 					       DT_REG_ADDR(node_id), DT_REG_ADDR(node_id),         \
 					       DT_REG_ADDR(node_id), DT_REG_ADDR(node_id),         \
