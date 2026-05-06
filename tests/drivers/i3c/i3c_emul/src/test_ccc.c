@@ -101,6 +101,56 @@ ZTEST(i3c_emul_ccc, test_setmrl_getmrl_round_trip)
 	zassert_equal(got.len, 0x4567, "GETMRL round-trip");
 }
 
+ZTEST(i3c_emul_ccc, test_setmwl_broadcast_reaches_every_target)
+{
+	struct i3c_ccc_mwl set = { .len = 0xBEEF };
+	int rc;
+
+	rc = i3c_ccc_do_setmwl_all(bus, &set);
+	zassert_ok(rc, "broadcast SETMWL: %d", rc);
+	zassert_equal(test_target_get_mwl(target_a), 0xBEEF, "A stored MWL");
+	zassert_equal(test_target_get_mwl(target_b), 0xBEEF, "B stored MWL");
+	zassert_equal(test_target_get_mwl(target_c), 0xBEEF, "C stored MWL");
+}
+
+ZTEST(i3c_emul_ccc, test_setmrl_broadcast_reaches_every_target)
+{
+	struct i3c_ccc_mrl set = { .len = 0xCAFE, .ibi_len = 0x05 };
+	int rc;
+
+	rc = i3c_ccc_do_setmrl_all(bus, &set, false);
+	zassert_ok(rc, "broadcast SETMRL: %d", rc);
+	zassert_equal(test_target_get_mrl(target_a), 0xCAFE, "A stored MRL");
+	zassert_equal(test_target_get_mrl(target_b), 0xCAFE, "B stored MRL");
+	zassert_equal(test_target_get_mrl(target_c), 0xCAFE, "C stored MRL");
+}
+
+ZTEST(i3c_emul_ccc, test_getbcr_returns_dt_configured_value)
+{
+	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
+	struct i3c_ccc_getbcr got = { 0 };
+	int rc;
+
+	zassert_not_null(desc, "target A desc");
+
+	rc = i3c_ccc_do_getbcr(desc, &got);
+	zassert_ok(rc, "GETBCR: %d", rc);
+	zassert_equal(got.bcr, 0x00, "BCR matches DT (target_a bcr = 0x00)");
+}
+
+ZTEST(i3c_emul_ccc, test_getdcr_returns_dt_configured_value)
+{
+	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
+	struct i3c_ccc_getdcr got = { 0 };
+	int rc;
+
+	zassert_not_null(desc, "target A desc");
+
+	rc = i3c_ccc_do_getdcr(desc, &got);
+	zassert_ok(rc, "GETDCR: %d", rc);
+	zassert_equal(got.dcr, 0x6c, "DCR matches DT (target_a dcr = 0x6c)");
+}
+
 ZTEST(i3c_emul_ccc, test_getstatus_returns_poked_value)
 {
 	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
