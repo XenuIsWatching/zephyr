@@ -29,6 +29,20 @@
 		};
 
 		/*
+		 * SETAASA-capable target. Has a static_addr and the
+		 * supports-setaasa flag, so i3c_bus_init issues SETAASA
+		 * (instead of SETDASA) and the peripheral self-assigns
+		 * static_addr -> dynamic_addr in response.
+		 */
+		test_target_c: target_c@660001112223334445 {
+			compatible = "zephyr,i3c-emul-test-target";
+			reg = <0x66 0x1112 0x22334455>;
+			supports-setaasa;
+			bcr = <0x00>;
+			dcr = <0x6c>;
+		};
+
+		/*
 		 * Legacy-I2C-on-I3C peripheral. reg = <addr 0 lvr> per the
 		 * i3c subsystem's i2c-device convention; the bus emulator
 		 * routes its i2c_api.transfer to this node's standard

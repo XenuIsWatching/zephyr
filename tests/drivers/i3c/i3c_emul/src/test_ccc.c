@@ -25,13 +25,16 @@
 #define I3C_BUS DT_NODELABEL(i3c0)
 #define TARGET_A DT_NODELABEL(test_target_a)
 #define TARGET_B DT_NODELABEL(test_target_b)
+#define TARGET_C DT_NODELABEL(test_target_c)
 
 #define TARGET_A_PID		TEST_TARGET_A_PID
 #define TARGET_B_PID		TEST_TARGET_B_PID
+#define TARGET_C_PID		TEST_TARGET_C_PID
 
 static const struct device *bus = DEVICE_DT_GET(I3C_BUS);
 static const struct emul *target_a = EMUL_DT_GET(TARGET_A);
 static const struct emul *target_b = EMUL_DT_GET(TARGET_B);
+static const struct emul *target_c = EMUL_DT_GET(TARGET_C);
 
 static struct i3c_device_desc *find_desc(uint64_t pid)
 {
@@ -178,10 +181,50 @@ ZTEST(i3c_emul_ccc, test_deftgts_broadcast_reaches_peripherals)
 	 *   then count * sizeof(target descriptor)
 	 *
 	 * count must be the number of attached I3C + I2C devices on this
-	 * bus. The test overlay declares two I3C targets (A and B) plus
-	 * one legacy-I2C-on-I3C target, so count is 3.
+	 * bus. The test overlay declares three I3C targets (A, B, C) plus
+	 * one legacy-I2C-on-I3C target, so count is 4.
 	 */
-	zassert_equal(buf[0], 3U, "DEFTGTS count = num attached, got %u", buf[0]);
+	zassert_equal(buf[0], 4U, "DEFTGTS count = num attached, got %u", buf[0]);
+}
+
+ZTEST(i3c_emul_ccc, test_setaasa_promotes_only_setaasa_capable_targets)
+{
+	struct i3c_device_desc *desc_a = find_desc(TARGET_A_PID);
+	struct i3c_device_desc *desc_c = find_desc(TARGET_C_PID);
+	int rc;
+
+	zassert_not_null(desc_a, "target A desc");
+	zassert_not_null(desc_c, "target C desc");
+
+	/*
+	 * Spec model:
+	 *  - Target A has a static_addr but does NOT advertise supports-setaasa.
+	 *    SETAASA must NOT promote it (the peripheral NACKs because the
+	 *    framework only treats descs with the supports-setaasa flag as
+	 *    SETAASA-capable, but the peripheral check is independent).
+	 *  - Target C has static_addr=0x66 AND supports-setaasa. After
+	 *    RSTDAA-all + i3c_bus_setaasa(), C's dyn_addr must equal its
+	 *    static_addr both in its desc and in the peripheral mirror.
+	 */
+	rc = i3c_bus_rstdaa_all(bus);
+	zassert_ok(rc, "RSTDAA: %d", rc);
+	zassert_equal(desc_a->dynamic_addr, 0U, "RSTDAA cleared A");
+	zassert_equal(desc_c->dynamic_addr, 0U, "RSTDAA cleared C");
+
+	rc = i3c_bus_setaasa(bus);
+	zassert_ok(rc, "SETAASA: %d", rc);
+
+	zassert_equal(desc_c->dynamic_addr, TEST_TARGET_C_STATIC,
+		      "C desc promoted by SETAASA");
+	zassert_equal(test_target_get_dynamic_addr(target_c), TEST_TARGET_C_STATIC,
+		      "C peripheral self-assigned static_addr -> dynamic_addr");
+
+	zassert_equal(desc_a->dynamic_addr, 0U,
+		      "A desc not promoted (no supports-setaasa flag)");
+	zassert_equal(test_target_get_dynamic_addr(target_a), 0U,
+		      "A peripheral did not self-assign");
+
+	/* Per-test before-hook restores the canonical address state. */
 }
 
 ZTEST_SUITE(i3c_emul_ccc, NULL, ccc_setup, ccc_before, NULL, NULL);

@@ -38,6 +38,7 @@ struct test_target_cfg {
 	uint64_t pid;
 	uint8_t bcr;
 	uint8_t dcr;
+	bool supports_setaasa;
 };
 
 struct test_target_data {
@@ -239,6 +240,21 @@ static int test_target_do_ccc(const struct emul *target, struct i3c_ccc_payload 
 			target->bus.i3c->dynamic_addr = data->dyn_addr;
 		}
 		return 0;
+	case I3C_CCC_SETAASA:
+		/*
+		 * SETAASA is broadcast and tells every SETAASA-capable target
+		 * to self-assign its static_addr as its dynamic_addr. There is
+		 * no per-target payload. Targets without supports-setaasa,
+		 * without a static_addr, or that already have a dyn_addr must
+		 * ignore it.
+		 */
+		if (!cfg->supports_setaasa || target->bus.i3c->static_addr == 0U ||
+		    data->dyn_addr != 0U) {
+			return 0;
+		}
+		data->dyn_addr = target->bus.i3c->static_addr;
+		target->bus.i3c->dynamic_addr = data->dyn_addr;
+		return 0;
 	case I3C_CCC_SETNEWDA:
 		/*
 		 * SETNEWDA changes an existing dynamic address to a new
@@ -425,6 +441,7 @@ static int test_target_init(const struct emul *target, const struct device *pare
 		       DT_INST_PROP_BY_IDX(n, reg, 2),                                             \
 		.bcr = DT_INST_PROP(n, bcr),                                                       \
 		.dcr = DT_INST_PROP(n, dcr),                                                       \
+		.supports_setaasa = DT_INST_PROP(n, supports_setaasa),                             \
 	};                                                                                         \
 	I3C_DEVICE_DT_INST_DEFINE(n, NULL, NULL, &test_target_data_##n, &test_target_cfg_##n,      \
 				  POST_KERNEL, CONFIG_APPLICATION_INIT_PRIORITY, NULL);            \

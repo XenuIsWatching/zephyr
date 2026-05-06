@@ -21,6 +21,8 @@
 #define TEST_TARGET_A_STATIC	0x55
 #define TEST_TARGET_B_PID	((uint64_t)0x5678 << 32 | 0xABCDEF01)
 #define TEST_TARGET_B_INIT_DA	0x42
+#define TEST_TARGET_C_PID	((uint64_t)0x1112 << 32 | 0x22334455)
+#define TEST_TARGET_C_STATIC	0x66
 
 struct test_target_backend_api {
 	uint8_t (*get_reg)(const struct emul *target, uint8_t idx);
