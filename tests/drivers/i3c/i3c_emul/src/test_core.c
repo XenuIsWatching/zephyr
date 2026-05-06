@@ -33,16 +33,9 @@ static const struct device *bus = DEVICE_DT_GET(I3C_BUS);
 static const struct emul *target_a = EMUL_DT_GET(TARGET_A);
 static const struct emul *target_b = EMUL_DT_GET(TARGET_B);
 
-static struct i3c_device_desc *find_desc(uint64_t pid)
-{
-	struct i3c_device_id id = { .pid = pid };
-
-	return i3c_device_find(bus, &id);
-}
-
 ZTEST(i3c_emul_core, test_attach_and_setdasa_static_to_dynamic)
 {
-	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
+	struct i3c_device_desc *desc = test_target_find_desc(bus, TARGET_A_PID);
 
 	zassert_not_null(desc, "device desc for target A must exist");
 	zassert_equal(desc->static_addr, TEST_TARGET_A_STATIC,
@@ -55,7 +48,7 @@ ZTEST(i3c_emul_core, test_attach_and_setdasa_static_to_dynamic)
 
 ZTEST(i3c_emul_core, test_do_daa_respects_init_dynamic_addr)
 {
-	struct i3c_device_desc *desc = find_desc(TARGET_B_PID);
+	struct i3c_device_desc *desc = test_target_find_desc(bus, TARGET_B_PID);
 
 	zassert_not_null(desc, "device desc for target B must exist");
 	zassert_equal(desc->static_addr, 0x00, "target B has no static addr");
@@ -67,7 +60,7 @@ ZTEST(i3c_emul_core, test_do_daa_respects_init_dynamic_addr)
 
 ZTEST(i3c_emul_core, test_xfers_routes_by_dynamic_addr)
 {
-	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
+	struct i3c_device_desc *desc = test_target_find_desc(bus, TARGET_A_PID);
 	uint8_t write_buf[3] = {0x00, 0xAA, 0xBB};
 	uint8_t read_buf[2] = {0};
 	int rc;
@@ -91,7 +84,7 @@ ZTEST(i3c_emul_core, test_xfers_routes_by_dynamic_addr)
 
 ZTEST(i3c_emul_core, test_ccc_getpid_round_trip)
 {
-	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
+	struct i3c_device_desc *desc = test_target_find_desc(bus, TARGET_A_PID);
 	struct i3c_ccc_getpid resp = {0};
 	int rc;
 
@@ -112,7 +105,7 @@ static int mock_xfers_eio(const struct emul *target, struct i3c_msg *msgs, uint8
 
 ZTEST(i3c_emul_core, test_mock_api_returns_eio)
 {
-	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
+	struct i3c_device_desc *desc = test_target_find_desc(bus, TARGET_A_PID);
 	static struct i3c_emul_api mock = {
 		.xfers = mock_xfers_eio,
 	};
@@ -158,10 +151,9 @@ ZTEST(i3c_emul_core, test_legacy_i2c_on_i3c_routes_via_i2c_api)
 
 static void *i3c_emul_setup(void)
 {
-	int rc = test_target_bus_known_state(bus, TARGET_A_PID, TEST_TARGET_A_STATIC,
-					     TARGET_B_PID, TARGET_B_INIT_DA);
+	int rc = test_target_bus_reset_to_default(bus);
 
-	zassert_ok(rc, "test_target_bus_known_state: %d", rc);
+	zassert_ok(rc, "test_target_bus_reset_to_default: %d", rc);
 	return NULL;
 }
 

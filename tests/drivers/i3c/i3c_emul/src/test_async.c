@@ -25,19 +25,11 @@
 
 static const struct device *bus = DEVICE_DT_GET(I3C_BUS);
 
-static struct i3c_device_desc *find_desc(uint64_t pid)
-{
-	struct i3c_device_id id = { .pid = pid };
-
-	return i3c_device_find(bus, &id);
-}
-
 static void *i3c_emul_async_setup(void)
 {
-	int rc = test_target_bus_known_state(bus, TEST_TARGET_A_PID, TEST_TARGET_A_STATIC,
-					     TEST_TARGET_B_PID, TEST_TARGET_B_INIT_DA);
+	int rc = test_target_bus_reset_to_default(bus);
 
-	zassert_ok(rc, "test_target_bus_known_state: %d", rc);
+	zassert_ok(rc, "test_target_bus_reset_to_default: %d", rc);
 	return NULL;
 }
 
@@ -59,7 +51,7 @@ static void async_cb(const struct device *dev, int result, void *userdata)
 
 ZTEST(i3c_emul_async, test_xfers_cb_fires_on_completion)
 {
-	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
+	struct i3c_device_desc *desc = test_target_find_desc(bus, TARGET_A_PID);
 	uint8_t buf[3] = {0x00, 0xAB, 0xCD};
 	struct i3c_msg msg = {
 		.buf = buf,
@@ -84,7 +76,7 @@ ZTEST(i3c_emul_async, test_xfers_cb_fires_on_completion)
 
 ZTEST(i3c_emul_async, test_do_ccc_cb_fires_on_completion)
 {
-	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
+	struct i3c_device_desc *desc = test_target_find_desc(bus, TARGET_A_PID);
 	struct i3c_ccc_target_payload tp = {0};
 	uint8_t pid_buf[6] = {0};
 	struct i3c_ccc_payload payload = {
