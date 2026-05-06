@@ -7,8 +7,7 @@
  * the full struct i3c_emul_api surface that M2-M5 wire up: private xfers,
  * direct/broadcast CCC responders (GETPID/GETBCR/GETDCR/GETSTATUS/GETMXDS,
  * SETMRL/GETMRL/SETMWL/GETMWL, DEFTGTS capture, SETDASA/SETNEWDA/RSTDAA
- * acks, ENEC/DISEC event-mask handling), set_dynamic_addr, and a backend
- * trigger API for tests.
+ * acks, ENEC/DISEC event-mask handling) and a backend trigger API for tests.
  */
 
 #define DT_DRV_COMPAT zephyr_i3c_emul_test_target
@@ -44,7 +43,6 @@ struct test_target_cfg {
 struct test_target_data {
 	uint8_t regs[TEST_TARGET_REG_SIZE];
 	uint8_t cursor;
-	uint8_t dyn_addr;
 
 	/* MRL / MWL state set via SETMRL / SETMWL, returned via GETMRL / GETMWL. */
 	uint16_t mrl;
@@ -110,7 +108,8 @@ static int test_target_do_ccc(const struct emul *target, struct i3c_ccc_payload 
 			 * without having to know which lookup mode the bus
 			 * emulator used.
 			 */
-			if (addr == data->dyn_addr || (my_static != 0U && addr == my_static)) {
+			if (addr == target->bus.i3c->dynamic_addr ||
+			    (my_static != 0U && addr == my_static)) {
 				tp = &payload->targets.payloads[i];
 				break;
 			}
@@ -170,7 +169,9 @@ static int test_target_do_ccc(const struct emul *target, struct i3c_ccc_payload 
 		 * i3c_bus_getacccr().
 		 */
 		if (tp != NULL && tp->data != NULL && tp->data_len >= 1U) {
-			tp->data[0] = (data->dyn_addr << 1) | i3c_odd_parity(data->dyn_addr);
+			uint8_t da = target->bus.i3c->dynamic_addr;
+
+			tp->data[0] = (da << 1) | i3c_odd_parity(da);
 			tp->num_xfer = 1U;
 		}
 		return 0;
@@ -231,12 +232,12 @@ static int test_target_do_ccc(const struct emul *target, struct i3c_ccc_payload 
 		 * address and does not yet have a dynamic one — NACK if the
 		 * peripheral has no static_addr or already has a dyn_addr.
 		 */
-		if (target->bus.i3c->static_addr == 0U || data->dyn_addr != 0U) {
+		if (target->bus.i3c->static_addr == 0U ||
+		    target->bus.i3c->dynamic_addr != 0U) {
 			return -EACCES;
 		}
 		if (tp != NULL && tp->data != NULL && tp->data_len >= 1U) {
-			data->dyn_addr = tp->data[0] >> 1;
-			target->bus.i3c->dynamic_addr = data->dyn_addr;
+			target->bus.i3c->dynamic_addr = tp->data[0] >> 1;
 		}
 		return 0;
 	case I3C_CCC_SETAASA:
@@ -248,27 +249,24 @@ static int test_target_do_ccc(const struct emul *target, struct i3c_ccc_payload 
 		 * ignore it.
 		 */
 		if (!cfg->supports_setaasa || target->bus.i3c->static_addr == 0U ||
-		    data->dyn_addr != 0U) {
+		    target->bus.i3c->dynamic_addr != 0U) {
 			return 0;
 		}
-		data->dyn_addr = target->bus.i3c->static_addr;
-		target->bus.i3c->dynamic_addr = data->dyn_addr;
+		target->bus.i3c->dynamic_addr = target->bus.i3c->static_addr;
 		return 0;
 	case I3C_CCC_SETNEWDA:
 		/*
 		 * SETNEWDA changes an existing dynamic address to a new
 		 * value — only legal for a target that already has one.
 		 */
-		if (data->dyn_addr == 0U) {
+		if (target->bus.i3c->dynamic_addr == 0U) {
 			return -EACCES;
 		}
 		if (tp != NULL && tp->data != NULL && tp->data_len >= 1U) {
-			data->dyn_addr = tp->data[0] >> 1;
-			target->bus.i3c->dynamic_addr = data->dyn_addr;
+			target->bus.i3c->dynamic_addr = tp->data[0] >> 1;
 		}
 		return 0;
 	case I3C_CCC_RSTDAA:
-		data->dyn_addr = 0;
 		target->bus.i3c->dynamic_addr = 0;
 		return 0;
 	case I3C_CCC_ENEC(true):
@@ -304,18 +302,9 @@ static int test_target_do_ccc(const struct emul *target, struct i3c_ccc_payload 
 	}
 }
 
-static int test_target_set_dynamic_addr(const struct emul *target, uint8_t dynamic_addr)
-{
-	struct test_target_data *data = target->data;
-
-	data->dyn_addr = dynamic_addr;
-	return 0;
-}
-
 static const struct i3c_emul_api test_target_api = {
 	.xfers = test_target_xfers,
 	.do_ccc = test_target_do_ccc,
-	.set_dynamic_addr = test_target_set_dynamic_addr,
 };
 
 uint8_t test_target_get_reg(const struct emul *target, uint8_t idx)
@@ -334,9 +323,7 @@ void test_target_set_reg(const struct emul *target, uint8_t idx, uint8_t value)
 
 uint8_t test_target_get_dynamic_addr(const struct emul *target)
 {
-	struct test_target_data *data = target->data;
-
-	return data->dyn_addr;
+	return target->bus.i3c->dynamic_addr;
 }
 
 void test_target_install_mock(const struct emul *target, struct i3c_emul_api *mock)
