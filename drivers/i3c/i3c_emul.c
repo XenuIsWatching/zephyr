@@ -652,46 +652,30 @@ static int i3c_emul_xfers_cb(const struct device *dev, struct i3c_device_desc *t
 #ifdef CONFIG_I3C_USE_IBI
 static int i3c_emul_ibi_enable(const struct device *dev, struct i3c_device_desc *target)
 {
-	struct i3c_emul *emul;
+	struct i3c_ccc_events events = { .events = I3C_CCC_EVT_INTR };
 
 	if (target == NULL) {
 		return -EINVAL;
 	}
 
-	emul = i3c_emul_find_by_addr(dev, target->dynamic_addr, false);
-	if (emul == NULL) {
-		return -ENODEV;
-	}
-
-	emul->ibi_enabled = true;
-
-	if (emul->api != NULL && emul->api->ibi_enable != NULL) {
-		return emul->api->ibi_enable(emul->target);
-	}
-
-	return 0;
+	/*
+	 * Real silicon enables a target's IBI by sending ENEC(INTR) at it
+	 * on the wire. Mirror that here: the peripheral's ENEC handler
+	 * will set its INTR bit, and i3c_emul_target_raise_ibi gates on
+	 * that bit via the test_target wrapper.
+	 */
+	return i3c_ccc_do_events_set(target, true, &events);
 }
 
 static int i3c_emul_ibi_disable(const struct device *dev, struct i3c_device_desc *target)
 {
-	struct i3c_emul *emul;
+	struct i3c_ccc_events events = { .events = I3C_CCC_EVT_INTR };
 
+	ARG_UNUSED(dev);
 	if (target == NULL) {
 		return -EINVAL;
 	}
-
-	emul = i3c_emul_find_by_addr(dev, target->dynamic_addr, false);
-	if (emul == NULL) {
-		return -ENODEV;
-	}
-
-	emul->ibi_enabled = false;
-
-	if (emul->api != NULL && emul->api->ibi_disable != NULL) {
-		return emul->api->ibi_disable(emul->target);
-	}
-
-	return 0;
+	return i3c_ccc_do_events_set(target, false, &events);
 }
 
 static int i3c_emul_ibi_hj_response(const struct device *dev, bool ack)
@@ -888,7 +872,7 @@ int i3c_emul_target_raise_ibi(const struct emul *target, uint8_t *payload, uint8
 		return -EINVAL;
 	}
 
-	if (!emul->ibi_enabled) {
+	if (!(emul->enabled_events & I3C_CCC_EVT_INTR)) {
 		return -ENOTCONN;
 	}
 
@@ -948,6 +932,10 @@ int i3c_emul_target_raise_hj(const struct emul *target)
 		return -EACCES;
 	}
 
+	if (!(emul->enabled_events & I3C_CCC_EVT_HJ)) {
+		return -EACCES;
+	}
+
 	data = emul->bus->data;
 	if (!data->ibi_hj_ack) {
 		return -ENOTCONN;
@@ -978,6 +966,10 @@ int i3c_emul_target_raise_crr(const struct emul *target)
 	emul = target->bus.i3c;
 	if (emul == NULL || emul->bus == NULL || emul->dynamic_addr == 0U) {
 		return -EINVAL;
+	}
+
+	if (!(emul->enabled_events & I3C_CCC_EVT_CR)) {
+		return -EACCES;
 	}
 
 	data = emul->bus->data;

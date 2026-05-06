@@ -82,12 +82,12 @@ struct i3c_emul {
 	uint8_t dcr;
 
 	/**
-	 * IBI ACK state, managed by the bus emulator.  Set when the controller
-	 * calls @c ibi_enable for this target, cleared by @c ibi_disable or
-	 * RSTDAA.  When @c false, IBIs raised via
-	 * @ref i3c_emul_target_raise_ibi are NACKed.
+	 * Per-event raise capability mask managed by the peripheral via
+	 * ENEC/DISEC. Holds I3C_CCC_EVT_INTR / _CR / _HJ bits. The bus
+	 * emulator's raise_ibi/raise_hj/raise_crr helpers consult the
+	 * matching bit before driving the event.
 	 */
-	bool ibi_enabled;
+	uint8_t enabled_events;
 };
 
 /**
@@ -137,10 +137,6 @@ typedef int (*i3c_emul_do_ccc_t)(const struct emul *target, struct i3c_ccc_paylo
  */
 typedef int (*i3c_emul_set_dynamic_addr_t)(const struct emul *target, uint8_t dynamic_addr);
 
-/** IBI enable/disable notification to a target emulator. */
-typedef int (*i3c_emul_ibi_enable_t)(const struct emul *target);
-typedef int (*i3c_emul_ibi_disable_t)(const struct emul *target);
-
 /**
  * Per-target API exposed by an I3C peripheral emulator to the bus emulator.
  *
@@ -152,8 +148,6 @@ struct i3c_emul_api {
 	i3c_emul_xfers_t xfers;
 	i3c_emul_do_ccc_t do_ccc;
 	i3c_emul_set_dynamic_addr_t set_dynamic_addr;
-	i3c_emul_ibi_enable_t ibi_enable;
-	i3c_emul_ibi_disable_t ibi_disable;
 	/** Optional. If NULL, bus emulator routes HDR-DDR through @ref xfers. */
 	i3c_emul_xfers_t hdr_ddr_xfers;
 };

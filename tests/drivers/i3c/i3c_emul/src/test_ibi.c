@@ -10,6 +10,7 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/emul.h>
 #include <zephyr/drivers/i3c.h>
+#include <zephyr/drivers/i3c/ccc.h>
 #include <zephyr/drivers/i3c/ibi.h>
 #include <zephyr/drivers/i3c_emul.h>
 #include <zephyr/kernel.h>
@@ -87,6 +88,17 @@ static void i3c_emul_ibi_before(void *fixture)
 	 */
 	(void)test_target_bus_known_state(bus, TEST_TARGET_A_PID, TEST_TARGET_A_STATIC,
 					  TEST_TARGET_B_PID, TEST_TARGET_B_INIT_DA);
+
+	/* Re-establish the post-bus-init event-mask baseline (only HJ
+	 * enabled); a prior test's DISEC/ENEC could have left it skewed.
+	 */
+	{
+		struct i3c_ccc_events ev_all = { .events = I3C_CCC_EVT_ALL };
+		struct i3c_ccc_events ev_hj = { .events = I3C_CCC_EVT_HJ };
+
+		(void)i3c_ccc_do_events_all_set(bus, false, &ev_all);
+		(void)i3c_ccc_do_events_all_set(bus, true, &ev_hj);
+	}
 }
 
 ZTEST(i3c_emul_ibi, test_ibi_disabled_drops)
@@ -106,8 +118,8 @@ ZTEST(i3c_emul_ibi, test_ibi_enabled_delivers_payload)
 
 	rc = i3c_ibi_enable(desc);
 	zassert_ok(rc, "i3c_ibi_enable: %d", rc);
-	zassert_true(test_target_ibi_was_enabled(target_a),
-		     "peripheral should have observed enable");
+	zassert_true(test_target_event_enabled(target_a, I3C_CCC_EVT_INTR),
+		     "i3c_ibi_enable should ENEC(INTR) on the wire");
 
 	rc = test_target_trigger_ibi(target_a, payload, sizeof(payload));
 	zassert_ok(rc, "trigger_ibi: %d", rc);
@@ -202,9 +214,13 @@ ZTEST(i3c_emul_ibi, test_hj_rejected_when_target_has_da)
 ZTEST(i3c_emul_ibi, test_crr_nack)
 {
 	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
+	struct i3c_ccc_events events = { .events = I3C_CCC_EVT_CR };
 	int rc;
 
 	zassert_not_null(desc, "target A desc");
+
+	rc = i3c_ccc_do_events_set(desc, true, &events);
+	zassert_ok(rc, "ENEC(CR): %d", rc);
 
 	rc = i3c_ibi_crr_response(desc, false);
 	zassert_ok(rc, "crr_response false: %d", rc);
@@ -216,9 +232,13 @@ ZTEST(i3c_emul_ibi, test_crr_nack)
 ZTEST(i3c_emul_ibi, test_crr_ack)
 {
 	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
+	struct i3c_ccc_events events = { .events = I3C_CCC_EVT_CR };
 	int rc;
 
 	zassert_not_null(desc, "target A desc");
+
+	rc = i3c_ccc_do_events_set(desc, true, &events);
+	zassert_ok(rc, "ENEC(CR): %d", rc);
 
 	rc = i3c_ibi_crr_response(desc, true);
 	zassert_ok(rc, "crr_response true: %d", rc);
@@ -227,6 +247,115 @@ ZTEST(i3c_emul_ibi, test_crr_ack)
 	zassert_ok(rc, "trigger_crr after ACK: %d", rc);
 
 	(void)i3c_ibi_crr_response(desc, false);
+}
+
+ZTEST(i3c_emul_ibi, test_disec_hj_blocks_target_from_raising_hj)
+{
+	struct i3c_ccc_events events = { .events = I3C_CCC_EVT_HJ };
+	int rc;
+
+	/*
+	 * Bus init broadcast ENEC(HJ), so peripheral baseline is HJ-enabled.
+	 * Confirm baseline, then DISEC(HJ) and verify the peripheral itself
+	 * refuses to drive HJ even though the controller is armed to ACK.
+	 */
+	zassert_true(test_target_event_enabled(target_a, I3C_CCC_EVT_HJ),
+		     "peripheral baseline: HJ enabled by bus-init ENEC(HJ)");
+
+	rc = i3c_bus_rstdaa_all(bus);
+	zassert_ok(rc, "rstdaa: %d", rc);
+	rc = i3c_ibi_hj_response(bus, true);
+	zassert_ok(rc, "hj_response true: %d", rc);
+
+	rc = i3c_ccc_do_events_all_set(bus, false, &events);
+	zassert_ok(rc, "DISEC(HJ): %d", rc);
+	zassert_false(test_target_event_enabled(target_a, I3C_CCC_EVT_HJ),
+		      "peripheral observed DISEC(HJ)");
+
+	rc = test_target_trigger_hj(target_a);
+	zassert_not_equal(rc, 0,
+			  "peripheral with HJ disabled must refuse to raise HJ");
+
+	(void)i3c_ibi_hj_response(bus, false);
+}
+
+ZTEST(i3c_emul_ibi, test_disec_cr_blocks_target_from_raising_crr)
+{
+	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
+	struct i3c_ccc_events events = { .events = I3C_CCC_EVT_CR };
+	int rc;
+
+	zassert_not_null(desc, "target A desc");
+
+	rc = i3c_ibi_crr_response(desc, true);
+	zassert_ok(rc, "crr_response true: %d", rc);
+
+	rc = i3c_ccc_do_events_all_set(bus, false, &events);
+	zassert_ok(rc, "DISEC(CR): %d", rc);
+	zassert_false(test_target_event_enabled(target_a, I3C_CCC_EVT_CR),
+		      "peripheral observed DISEC(CR)");
+
+	rc = test_target_trigger_crr(target_a);
+	zassert_not_equal(rc, 0,
+			  "peripheral with CR disabled must refuse to raise CRR");
+
+	(void)i3c_ibi_crr_response(desc, false);
+}
+
+ZTEST(i3c_emul_ibi, test_disec_intr_blocks_target_from_raising_ibi)
+{
+	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
+	struct i3c_ccc_events events = { .events = I3C_CCC_EVT_INTR };
+	uint8_t payload[] = {0x11, 0x22};
+	int rc;
+
+	zassert_not_null(desc, "target A desc");
+
+	rc = i3c_ibi_enable(desc);
+	zassert_ok(rc, "i3c_ibi_enable: %d", rc);
+
+	rc = i3c_ccc_do_events_all_set(bus, false, &events);
+	zassert_ok(rc, "DISEC(INTR): %d", rc);
+	zassert_false(test_target_event_enabled(target_a, I3C_CCC_EVT_INTR),
+		      "peripheral observed DISEC(INTR)");
+
+	rc = test_target_trigger_ibi(target_a, payload, sizeof(payload));
+	zassert_not_equal(rc, 0,
+			  "peripheral with INTR disabled must refuse to raise IBI");
+
+	(void)i3c_ibi_disable(desc);
+}
+
+ZTEST(i3c_emul_ibi, test_enec_re_enables_blocked_event)
+{
+	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
+	struct i3c_ccc_events events = { .events = I3C_CCC_EVT_INTR };
+	uint8_t payload[] = {0x33, 0x44};
+	int rc;
+
+	zassert_not_null(desc, "target A desc");
+
+	/*
+	 * DISEC(INTR), then ENEC(INTR), then a successful trigger proves
+	 * the bit-toggle round-trips and the peripheral re-arms.
+	 */
+	rc = i3c_ibi_enable(desc);
+	zassert_ok(rc, "i3c_ibi_enable: %d", rc);
+
+	rc = i3c_ccc_do_events_all_set(bus, false, &events);
+	zassert_ok(rc, "DISEC(INTR): %d", rc);
+	zassert_false(test_target_event_enabled(target_a, I3C_CCC_EVT_INTR),
+		      "INTR cleared by DISEC");
+
+	rc = i3c_ccc_do_events_all_set(bus, true, &events);
+	zassert_ok(rc, "ENEC(INTR): %d", rc);
+	zassert_true(test_target_event_enabled(target_a, I3C_CCC_EVT_INTR),
+		     "INTR re-set by ENEC");
+
+	rc = test_target_trigger_ibi(target_a, payload, sizeof(payload));
+	zassert_ok(rc, "trigger_ibi after re-enable: %d", rc);
+
+	(void)i3c_ibi_disable(desc);
 }
 
 ZTEST_SUITE(i3c_emul_ibi, NULL, i3c_emul_ibi_setup, i3c_emul_ibi_before, NULL, NULL);

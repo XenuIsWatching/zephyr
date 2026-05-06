@@ -32,13 +32,13 @@ struct test_target_backend_api {
 	int (*trigger_ibi)(const struct emul *target, uint8_t *payload, uint8_t len);
 	int (*trigger_hj)(const struct emul *target);
 	int (*trigger_crr)(const struct emul *target);
-	bool (*ibi_was_enabled)(const struct emul *target);
 	void (*set_status_fmt1)(const struct emul *target, uint16_t status);
 	uint16_t (*get_mrl)(const struct emul *target);
 	uint16_t (*get_mwl)(const struct emul *target);
 	bool (*deftgts_was_seen)(const struct emul *target);
 	size_t (*get_deftgts)(const struct emul *target, uint8_t *out, size_t out_len);
 	void (*clear_deftgts)(const struct emul *target);
+	bool (*event_enabled)(const struct emul *target, uint8_t event_mask);
 };
 
 uint8_t test_target_get_reg(const struct emul *target, uint8_t idx);
@@ -48,13 +48,19 @@ void test_target_install_mock(const struct emul *target, struct i3c_emul_api *mo
 int test_target_trigger_ibi(const struct emul *target, uint8_t *payload, uint8_t len);
 int test_target_trigger_hj(const struct emul *target);
 int test_target_trigger_crr(const struct emul *target);
-bool test_target_ibi_was_enabled(const struct emul *target);
 void test_target_set_status_fmt1(const struct emul *target, uint16_t status);
 uint16_t test_target_get_mrl(const struct emul *target);
 uint16_t test_target_get_mwl(const struct emul *target);
 bool test_target_deftgts_was_seen(const struct emul *target);
 size_t test_target_get_deftgts(const struct emul *target, uint8_t *out, size_t out_len);
 void test_target_clear_deftgts(const struct emul *target);
+
+/*
+ * Per-event enable state tracked by ENEC/DISEC. event_mask is one of
+ * I3C_CCC_EVT_INTR / _CR / _HJ. Returns true if the peripheral is
+ * currently allowed to raise that event class.
+ */
+bool test_target_event_enabled(const struct emul *target, uint8_t event_mask);
 
 /*
  * Bring the bus back to the canonical address-assignment state every

@@ -7,8 +7,8 @@
  * the full struct i3c_emul_api surface that M2-M5 wire up: private xfers,
  * direct/broadcast CCC responders (GETPID/GETBCR/GETDCR/GETSTATUS/GETMXDS,
  * SETMRL/GETMRL/SETMWL/GETMWL, DEFTGTS capture, SETDASA/SETNEWDA/RSTDAA
- * acks), set_dynamic_addr, ibi_enable/disable, and a backend trigger API
- * for tests.
+ * acks, ENEC/DISEC event-mask handling), set_dynamic_addr, and a backend
+ * trigger API for tests.
  */
 
 #define DT_DRV_COMPAT zephyr_i3c_emul_test_target
@@ -45,7 +45,6 @@ struct test_target_data {
 	uint8_t regs[TEST_TARGET_REG_SIZE];
 	uint8_t cursor;
 	uint8_t dyn_addr;
-	bool ibi_enabled_seen;
 
 	/* MRL / MWL state set via SETMRL / SETMWL, returned via GETMRL / GETMWL. */
 	uint16_t mrl;
@@ -271,10 +270,35 @@ static int test_target_do_ccc(const struct emul *target, struct i3c_ccc_payload 
 	case I3C_CCC_RSTDAA:
 		data->dyn_addr = 0;
 		target->bus.i3c->dynamic_addr = 0;
-#ifdef CONFIG_I3C_USE_IBI
-		target->bus.i3c->ibi_enabled = false;
-#endif
 		return 0;
+	case I3C_CCC_ENEC(true):
+	case I3C_CCC_ENEC(false): {
+		const uint8_t *evt = (payload->ccc.id == I3C_CCC_ENEC(true))
+			? payload->ccc.data
+			: (tp != NULL ? tp->data : NULL);
+		size_t len = (payload->ccc.id == I3C_CCC_ENEC(true))
+			? payload->ccc.data_len
+			: (tp != NULL ? tp->data_len : 0U);
+
+		if (evt != NULL && len >= 1U) {
+			target->bus.i3c->enabled_events |= (evt[0] & I3C_CCC_EVT_ALL);
+		}
+		return 0;
+	}
+	case I3C_CCC_DISEC(true):
+	case I3C_CCC_DISEC(false): {
+		const uint8_t *evt = (payload->ccc.id == I3C_CCC_DISEC(true))
+			? payload->ccc.data
+			: (tp != NULL ? tp->data : NULL);
+		size_t len = (payload->ccc.id == I3C_CCC_DISEC(true))
+			? payload->ccc.data_len
+			: (tp != NULL ? tp->data_len : 0U);
+
+		if (evt != NULL && len >= 1U) {
+			target->bus.i3c->enabled_events &= ~(evt[0] & I3C_CCC_EVT_ALL);
+		}
+		return 0;
+	}
 	default:
 		return -ENOTSUP;
 	}
@@ -288,26 +312,10 @@ static int test_target_set_dynamic_addr(const struct emul *target, uint8_t dynam
 	return 0;
 }
 
-static int test_target_ibi_enable(const struct emul *target)
-{
-	struct test_target_data *data = target->data;
-
-	data->ibi_enabled_seen = true;
-	return 0;
-}
-
-static int test_target_ibi_disable(const struct emul *target)
-{
-	ARG_UNUSED(target);
-	return 0;
-}
-
 static const struct i3c_emul_api test_target_api = {
 	.xfers = test_target_xfers,
 	.do_ccc = test_target_do_ccc,
 	.set_dynamic_addr = test_target_set_dynamic_addr,
-	.ibi_enable = test_target_ibi_enable,
-	.ibi_disable = test_target_ibi_disable,
 };
 
 uint8_t test_target_get_reg(const struct emul *target, uint8_t idx)
@@ -349,13 +357,6 @@ int test_target_trigger_hj(const struct emul *target)
 int test_target_trigger_crr(const struct emul *target)
 {
 	return i3c_emul_target_raise_crr(target);
-}
-
-bool test_target_ibi_was_enabled(const struct emul *target)
-{
-	struct test_target_data *data = target->data;
-
-	return data->ibi_enabled_seen;
 }
 
 void test_target_set_status_fmt1(const struct emul *target, uint16_t status)
@@ -405,6 +406,11 @@ void test_target_clear_deftgts(const struct emul *target)
 	data->deftgts_seen = false;
 }
 
+bool test_target_event_enabled(const struct emul *target, uint8_t event_mask)
+{
+	return (target->bus.i3c->enabled_events & event_mask) == event_mask;
+}
+
 static const struct test_target_backend_api test_target_backend = {
 	.get_reg = test_target_get_reg,
 	.set_reg = test_target_set_reg,
@@ -413,13 +419,13 @@ static const struct test_target_backend_api test_target_backend = {
 	.trigger_ibi = test_target_trigger_ibi,
 	.trigger_hj = test_target_trigger_hj,
 	.trigger_crr = test_target_trigger_crr,
-	.ibi_was_enabled = test_target_ibi_was_enabled,
 	.set_status_fmt1 = test_target_set_status_fmt1,
 	.get_mrl = test_target_get_mrl,
 	.get_mwl = test_target_get_mwl,
 	.deftgts_was_seen = test_target_deftgts_was_seen,
 	.get_deftgts = test_target_get_deftgts,
 	.clear_deftgts = test_target_clear_deftgts,
+	.event_enabled = test_target_event_enabled,
 };
 
 static int test_target_init(const struct emul *target, const struct device *parent)
@@ -431,6 +437,13 @@ static int test_target_init(const struct emul *target, const struct device *pare
 	target->bus.i3c->pid = cfg->pid;
 	target->bus.i3c->bcr = cfg->bcr;
 	target->bus.i3c->dcr = cfg->dcr;
+
+	/*
+	 * Powered-up baseline per the I3C spec: targets come up with INTR
+	 * and CR raise capability. HJ stays off until the controller broadcasts
+	 * ENEC(HJ) — which i3c_bus_init does at the end of initialization.
+	 */
+	target->bus.i3c->enabled_events = I3C_CCC_EVT_INTR | I3C_CCC_EVT_CR;
 	return 0;
 }
 
