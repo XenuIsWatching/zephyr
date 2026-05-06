@@ -30,7 +30,6 @@ LOG_MODULE_REGISTER(i3c_emul_ctlr);
 
 struct i3c_emul_data {
 	struct i3c_driver_data common;
-	sys_slist_t i2c_emuls;
 #ifdef CONFIG_I3C_USE_IBI
 	bool ibi_hj_ack;
 	bool ibi_crr_ack;
@@ -82,6 +81,26 @@ static struct i3c_emul *i3c_emul_lookup_by_pid(const struct device *bus, uint64_
 		}
 		if (e->bus.i3c->pid == pid) {
 			return e->bus.i3c;
+		}
+	}
+	return NULL;
+}
+
+static struct i2c_emul *i3c_emul_lookup_i2c_by_addr(const struct device *bus, uint16_t addr)
+{
+	const struct i3c_emul_config *cfg = bus->config;
+	const struct emul_link_for_bus *elp;
+	const struct emul_link_for_bus *const end =
+		cfg->emul_list.children + cfg->emul_list.num_children;
+
+	for (elp = cfg->emul_list.children; elp < end; elp++) {
+		const struct emul *e = emul_get_binding(elp->dev->name);
+
+		if (e == NULL || e->bus_type != EMUL_BUS_TYPE_I2C) {
+			continue;
+		}
+		if (e->bus.i2c != NULL && e->bus.i2c->addr == addr) {
+			return e->bus.i2c;
 		}
 	}
 	return NULL;
@@ -188,6 +207,13 @@ static int i3c_emul_recover_bus(const struct device *dev)
 static int i3c_emul_attach_i3c_device(const struct device *dev, struct i3c_device_desc *target)
 {
 	target->controller_priv = i3c_emul_lookup_by_pid(dev, target->pid);
+	return 0;
+}
+
+static int i3c_emul_attach_i2c_device(const struct device *dev,
+				      struct i3c_i2c_device_desc *target)
+{
+	target->controller_priv = i3c_emul_lookup_i2c_by_addr(dev, target->addr);
 	return 0;
 }
 
@@ -776,27 +802,26 @@ static int i3c_emul_i2c_api_configure(const struct device *dev, uint32_t dev_con
 static int i3c_emul_i2c_api_transfer(const struct device *dev, struct i2c_msg *msgs,
 				     uint8_t num_msgs, uint16_t addr)
 {
-	struct i3c_emul_data *data = dev->data;
-	struct i2c_emul *emul;
+	struct i3c_i2c_device_desc *desc;
 
 	if (msgs == NULL || num_msgs == 0U) {
 		return 0;
 	}
 
-	SYS_SLIST_FOR_EACH_CONTAINER(&data->i2c_emuls, emul, node) {
-		if (emul->addr == addr) {
-			__ASSERT_NO_MSG(emul->api != NULL);
-			__ASSERT_NO_MSG(emul->api->transfer != NULL);
-			if (emul->mock_api != NULL && emul->mock_api->transfer != NULL) {
-				int rc = emul->mock_api->transfer(emul->target, msgs,
-								  num_msgs, addr);
+	I3C_BUS_FOR_EACH_I2CDEV(dev, desc) {
+		struct i2c_emul *emul = desc->controller_priv;
 
-				if (rc != -ENOSYS) {
-					return rc;
-				}
-			}
-			return emul->api->transfer(emul->target, msgs, num_msgs, addr);
+		if (desc->addr != addr || emul == NULL) {
+			continue;
 		}
+		if (emul->mock_api != NULL && emul->mock_api->transfer != NULL) {
+			int rc = emul->mock_api->transfer(emul->target, msgs, num_msgs, addr);
+
+			if (rc != -ENOSYS) {
+				return rc;
+			}
+		}
+		return emul->api->transfer(emul->target, msgs, num_msgs, addr);
 	}
 
 	return -EIO;
@@ -820,18 +845,12 @@ int i3c_emul_register(const struct device *dev, struct i3c_emul *emul)
 
 int i3c_emul_register_i2c(const struct device *dev, struct i2c_emul *emul)
 {
-	struct i3c_emul_data *data = dev->data;
-	struct i3c_i2c_device_desc *desc;
-
-	sys_slist_append(&data->i2c_emuls, &emul->node);
-
-	I3C_BUS_FOR_EACH_I2CDEV(dev, desc) {
-		if (desc->addr == emul->addr) {
-			desc->controller_priv = emul;
-			break;
-		}
-	}
-
+	/*
+	 * No desc->controller_priv linkup here — that happens in the
+	 * attach_i2c_device hook, which the i3c subsystem invokes once the
+	 * desc is added to the bus's attached_dev list. At register time
+	 * the desc list is still empty.
+	 */
 	LOG_INF("%s: register legacy-i2c-on-i3c emul '%s' (addr=0x%02x)", dev->name,
 		emul->target->dev->name, emul->addr);
 
@@ -983,8 +1002,6 @@ static int i3c_emul_init(const struct device *dev)
 	data->common.ctrl_config.scl.i3c = cfg->i3c_scl_hz;
 	data->common.ctrl_config.scl.i2c = cfg->i2c_scl_hz;
 
-	sys_slist_init(&data->i2c_emuls);
-
 	/*
 	 * Register peripheral emuls first so they set their per-emul ->bus
 	 * pointer. Then run i3c_addr_slots_init: it calls
@@ -1023,6 +1040,7 @@ DEVICE_API(i3c, i3c_emul_api) = {
 	.recover_bus = i3c_emul_recover_bus,
 	.attach_i3c_device = i3c_emul_attach_i3c_device,
 	.detach_i3c_device = i3c_emul_detach_i3c_device,
+	.attach_i2c_device = i3c_emul_attach_i2c_device,
 	.do_daa = i3c_emul_do_daa,
 	.do_ccc = i3c_emul_do_ccc,
 	.i3c_xfers = i3c_emul_xfers,
