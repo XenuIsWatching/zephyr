@@ -11,8 +11,7 @@
 		#address-cells = <3>;
 		#size-cells = <0>;
 		i3c-scl-hz = <12500000>;
-		i2c-scl-hz = <400000>;
-		disable-hj-at-init;
+		i2c-scl-hz = <1000000>;
 
 		test_target_a: target_a@5500001234012345678 {
 			compatible = "zephyr,i3c-emul-test-target";
