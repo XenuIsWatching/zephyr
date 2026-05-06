@@ -23,6 +23,13 @@
 
 static const struct device *bus = DEVICE_DT_GET(I3C_BUS);
 
+static struct i3c_device_desc *find_desc(uint64_t pid)
+{
+	struct i3c_device_id id = { .pid = pid };
+
+	return i3c_device_find(bus, &id);
+}
+
 static struct {
 	atomic_t write_requested;
 	atomic_t write_received_total;
@@ -101,9 +108,10 @@ static struct i3c_device_desc shadow_desc;
 
 static void *target_setup(void)
 {
-	int rc = test_target_bus_reset_to_default(bus);
+	int rc = test_target_bus_known_state(bus, TEST_TARGET_A_PID, TEST_TARGET_A_STATIC,
+					     TEST_TARGET_B_PID, TEST_TARGET_B_INIT_DA);
 
-	zassert_ok(rc, "test_target_bus_reset_to_default: %d", rc);
+	zassert_ok(rc, "test_target_bus_known_state: %d", rc);
 
 	shadow_desc.bus = bus;
 	shadow_desc.dynamic_addr = TARGET_MODE_ADDR;
@@ -127,7 +135,8 @@ static void target_before(void *fixture)
 	 * (RSTDAA, sec_handoffed re-attach) can leave the bus in a
 	 * different shape.
 	 */
-	(void)test_target_bus_reset_to_default(bus);
+	(void)test_target_bus_known_state(bus, TEST_TARGET_A_PID, TEST_TARGET_A_STATIC,
+					  TEST_TARGET_B_PID, TEST_TARGET_B_INIT_DA);
 }
 
 ZTEST(i3c_emul_target, test_register_then_xfer_invokes_callbacks)
@@ -238,7 +247,7 @@ ZTEST(i3c_emul_target, test_handoff_completes_on_getacccr_to_registered_target)
 	 *   target_config.enabled = false (we are the active controller
 	 *   now, not a target).
 	 */
-	desc_a = test_target_find_desc(bus, TARGET_A_PID);
+	desc_a = find_desc(TARGET_A_PID);
 	zassert_not_null(desc_a, "target A desc");
 	zassert_not_equal(desc_a->dynamic_addr, 0U,
 			  "before-hook should have established target A's DA");
@@ -282,7 +291,7 @@ ZTEST(i3c_emul_target, test_handoff_nacked_by_application_fails)
 	 * NACKs the handoff offer. The controller-side initiation must
 	 * fail and the callback must stay silent.
 	 */
-	desc_a = test_target_find_desc(bus, TARGET_A_PID);
+	desc_a = find_desc(TARGET_A_PID);
 	zassert_not_null(desc_a, "target A desc");
 	zassert_not_equal(desc_a->dynamic_addr, 0U,
 			  "before-hook should have established target A's DA");
@@ -316,7 +325,7 @@ ZTEST(i3c_emul_target, test_controller_handoff_to_peripheral_via_getacccr)
 	 * emulator's CCC dispatch + the peripheral's GETACCCR responder
 	 * are what get exercised.
 	 */
-	desc = test_target_find_desc(bus, TARGET_A_PID);
+	desc = find_desc(TARGET_A_PID);
 	zassert_not_null(desc, "target A desc");
 	zassert_not_equal(desc->dynamic_addr, 0U,
 			  "before-hook should have established target A's DA");
@@ -364,7 +373,7 @@ ZTEST(i3c_emul_target, test_handoff_completes_and_sec_handoffed_repopulates_bus)
 	 * re-attached and have controller_priv set, proving the device-now-
 	 * acting-as-active-controller can immediately drive the bus.
 	 */
-	desc_a = test_target_find_desc(bus, TARGET_A_PID);
+	desc_a = find_desc(TARGET_A_PID);
 	zassert_not_null(desc_a, "target A desc");
 	zassert_not_equal(desc_a->dynamic_addr, 0U,
 			  "before-hook should have established target A's DA");

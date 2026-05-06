@@ -9,7 +9,6 @@
 #include <stdint.h>
 
 #include <zephyr/drivers/emul.h>
-#include <zephyr/drivers/i3c.h>
 #include <zephyr/drivers/i3c_emul.h>
 
 /*
@@ -58,8 +57,8 @@ void test_target_clear_deftgts(const struct emul *target);
 /*
  * Bring the bus back to the canonical address-assignment state every
  * test-suite setup expects:
- *   - target A reachable at TEST_TARGET_A_STATIC (via SETDASA)
- *   - target B reachable at TEST_TARGET_B_INIT_DA (via DAA)
+ *   - target identified by pid_a is reachable at static_a (via SETDASA)
+ *   - target identified by pid_b is reachable at init_dyn_b (via DAA)
  *
  * If the bus is already in that state, this is a near-no-op (just
  * confirms via i3c_device_find). Safe to call from any test setup or
@@ -68,17 +67,7 @@ void test_target_clear_deftgts(const struct emul *target);
  * Returns 0 on success, negative errno on failure.
  */
 struct device;
-int test_target_bus_reset_to_default(const struct device *bus);
-
-/*
- * Look up an attached i3c_device_desc by its (constant) PID. Tests that
- * want to operate on target A or B grab the desc this way.
- */
-static inline struct i3c_device_desc *test_target_find_desc(const struct device *bus, uint64_t pid)
-{
-	struct i3c_device_id id = { .pid = pid };
-
-	return i3c_device_find(bus, &id);
-}
+int test_target_bus_known_state(const struct device *bus, uint64_t pid_a, uint8_t static_a,
+				uint64_t pid_b, uint8_t init_dyn_b);
 
 #endif /* TEST_DRIVERS_I3C_I3C_EMUL_TEST_TARGET_EMUL_H_ */

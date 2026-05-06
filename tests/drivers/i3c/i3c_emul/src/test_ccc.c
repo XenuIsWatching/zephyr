@@ -33,11 +33,19 @@ static const struct device *bus = DEVICE_DT_GET(I3C_BUS);
 static const struct emul *target_a = EMUL_DT_GET(TARGET_A);
 static const struct emul *target_b = EMUL_DT_GET(TARGET_B);
 
+static struct i3c_device_desc *find_desc(uint64_t pid)
+{
+	struct i3c_device_id id = { .pid = pid };
+
+	return i3c_device_find(bus, &id);
+}
+
 static void *ccc_setup(void)
 {
-	int rc = test_target_bus_reset_to_default(bus);
+	int rc = test_target_bus_known_state(bus, TEST_TARGET_A_PID, TEST_TARGET_A_STATIC,
+					     TEST_TARGET_B_PID, TEST_TARGET_B_INIT_DA);
 
-	zassert_ok(rc, "test_target_bus_reset_to_default: %d", rc);
+	zassert_ok(rc, "test_target_bus_known_state: %d", rc);
 	return NULL;
 }
 
@@ -48,12 +56,13 @@ static void ccc_before(void *fixture)
 	/* Re-establish the canonical address state so per-test mutations
 	 * (RSTDAA, SETNEWDA, ...) don't leak between tests.
 	 */
-	(void)test_target_bus_reset_to_default(bus);
+	(void)test_target_bus_known_state(bus, TEST_TARGET_A_PID, TEST_TARGET_A_STATIC,
+					  TEST_TARGET_B_PID, TEST_TARGET_B_INIT_DA);
 }
 
 ZTEST(i3c_emul_ccc, test_setmwl_getmwl_round_trip)
 {
-	struct i3c_device_desc *desc = test_target_find_desc(bus, TARGET_A_PID);
+	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
 	struct i3c_ccc_mwl set = { .len = 0x0123 };
 	struct i3c_ccc_mwl got = { 0 };
 	int rc;
@@ -69,7 +78,7 @@ ZTEST(i3c_emul_ccc, test_setmwl_getmwl_round_trip)
 
 ZTEST(i3c_emul_ccc, test_setmrl_getmrl_round_trip)
 {
-	struct i3c_device_desc *desc = test_target_find_desc(bus, TARGET_A_PID);
+	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
 	struct i3c_ccc_mrl set = { .len = 0x4567, .ibi_len = 0x08 };
 	struct i3c_ccc_mrl got = { 0 };
 	int rc;
@@ -91,7 +100,7 @@ ZTEST(i3c_emul_ccc, test_setmrl_getmrl_round_trip)
 
 ZTEST(i3c_emul_ccc, test_getstatus_returns_poked_value)
 {
-	struct i3c_device_desc *desc = test_target_find_desc(bus, TARGET_A_PID);
+	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
 	union i3c_ccc_getstatus got = { 0 };
 	int rc;
 
@@ -106,7 +115,7 @@ ZTEST(i3c_emul_ccc, test_getstatus_returns_poked_value)
 
 ZTEST(i3c_emul_ccc, test_setnewda_changes_dynamic_addr)
 {
-	struct i3c_device_desc *desc = test_target_find_desc(bus, TARGET_A_PID);
+	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
 	const uint8_t new_addr = 0x33;
 	int rc;
 
@@ -123,8 +132,8 @@ ZTEST(i3c_emul_ccc, test_setnewda_changes_dynamic_addr)
 
 ZTEST(i3c_emul_ccc, test_rstdaa_clears_addresses)
 {
-	struct i3c_device_desc *desc_a = test_target_find_desc(bus, TARGET_A_PID);
-	struct i3c_device_desc *desc_b = test_target_find_desc(bus, TARGET_B_PID);
+	struct i3c_device_desc *desc_a = find_desc(TARGET_A_PID);
+	struct i3c_device_desc *desc_b = find_desc(TARGET_B_PID);
 	int rc;
 
 	zassert_not_equal(desc_a->dynamic_addr, 0U, "precondition: A has dyn addr");

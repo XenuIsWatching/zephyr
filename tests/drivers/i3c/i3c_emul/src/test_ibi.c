@@ -50,14 +50,22 @@ static int test_ibi_cb(struct i3c_device_desc *target, struct i3c_ibi_payload *p
 	return 0;
 }
 
+static struct i3c_device_desc *find_desc(uint64_t pid)
+{
+	struct i3c_device_id id = { .pid = pid };
+
+	return i3c_device_find(bus, &id);
+}
+
 static void *i3c_emul_ibi_setup(void)
 {
 	struct i3c_device_desc *desc;
-	int rc = test_target_bus_reset_to_default(bus);
+	int rc = test_target_bus_known_state(bus, TEST_TARGET_A_PID, TEST_TARGET_A_STATIC,
+					     TEST_TARGET_B_PID, TEST_TARGET_B_INIT_DA);
 
-	zassert_ok(rc, "test_target_bus_reset_to_default: %d", rc);
+	zassert_ok(rc, "test_target_bus_known_state: %d", rc);
 
-	desc = test_target_find_desc(bus, TARGET_A_PID);
+	desc = find_desc(TARGET_A_PID);
 	zassert_not_null(desc, "target A desc");
 	desc->ibi_cb = test_ibi_cb;
 	k_sem_init(&g_ibi.fired, 0, 1);
@@ -77,7 +85,8 @@ static void i3c_emul_ibi_before(void *fixture)
 	/* Re-establish the canonical address state in case a prior test
 	 * (RSTDAA, HJ-driven DAA, etc.) left things in a different shape.
 	 */
-	(void)test_target_bus_reset_to_default(bus);
+	(void)test_target_bus_known_state(bus, TEST_TARGET_A_PID, TEST_TARGET_A_STATIC,
+					  TEST_TARGET_B_PID, TEST_TARGET_B_INIT_DA);
 }
 
 ZTEST(i3c_emul_ibi, test_ibi_disabled_drops)
@@ -91,7 +100,7 @@ ZTEST(i3c_emul_ibi, test_ibi_disabled_drops)
 
 ZTEST(i3c_emul_ibi, test_ibi_enabled_delivers_payload)
 {
-	struct i3c_device_desc *desc = test_target_find_desc(bus, TARGET_A_PID);
+	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
 	uint8_t payload[] = {0xDE, 0xAD, 0xBE, 0xEF};
 	int rc;
 
@@ -192,7 +201,7 @@ ZTEST(i3c_emul_ibi, test_hj_rejected_when_target_has_da)
 
 ZTEST(i3c_emul_ibi, test_crr_nack)
 {
-	struct i3c_device_desc *desc = test_target_find_desc(bus, TARGET_A_PID);
+	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
 	int rc;
 
 	zassert_not_null(desc, "target A desc");
@@ -206,7 +215,7 @@ ZTEST(i3c_emul_ibi, test_crr_nack)
 
 ZTEST(i3c_emul_ibi, test_crr_ack)
 {
-	struct i3c_device_desc *desc = test_target_find_desc(bus, TARGET_A_PID);
+	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
 	int rc;
 
 	zassert_not_null(desc, "target A desc");
