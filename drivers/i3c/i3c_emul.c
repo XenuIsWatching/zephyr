@@ -711,6 +711,7 @@ static int i3c_emul_target_unregister(const struct device *dev, struct i3c_targe
 
 	data->target_cfg = NULL;
 	data->target_config.enabled = false;
+	data->handoff_accept = false;
 #if CONFIG_I3C_EMUL_TARGET_TX_FIFO_SIZE > 0
 	data->tx_fifo_len = 0;
 	data->tx_fifo_hdr_mode = 0;
