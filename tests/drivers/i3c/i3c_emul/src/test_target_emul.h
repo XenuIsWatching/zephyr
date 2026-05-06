@@ -23,6 +23,10 @@
 #define TEST_TARGET_B_INIT_DA	0x42
 #define TEST_TARGET_C_PID	((uint64_t)0x1112 << 32 | 0x22334455)
 #define TEST_TARGET_C_STATIC	0x66
+#define TEST_TARGET_D_PID	((uint64_t)0x9999 << 32 | 0xAABBCCDD)
+#define TEST_TARGET_D_STATIC	0x77
+#define TEST_TARGET_E_PID	((uint64_t)0x1111 << 32 | 0x22334456)
+#define TEST_TARGET_E_STATIC	0x44
 
 struct test_target_backend_api {
 	uint8_t (*get_reg)(const struct emul *target, uint8_t idx);
@@ -61,6 +65,13 @@ void test_target_clear_deftgts(const struct emul *target);
  * currently allowed to raise that event class.
  */
 bool test_target_event_enabled(const struct emul *target, uint8_t event_mask);
+
+/*
+ * Number of HDR-DDR private xfers the peripheral has handled. Used to
+ * verify the bus emulator dispatches I3C_MSG_HDR | hdr_mode = HDR_DDR
+ * messages through hdr_ddr_xfers rather than the SDR xfers path.
+ */
+uint32_t test_target_get_hdr_ddr_xfer_count(const struct emul *target);
 
 /*
  * Bring the bus back to the canonical address-assignment state every

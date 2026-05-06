@@ -30,6 +30,13 @@ LOG_MODULE_REGISTER(i3c_emul_ctlr);
 
 struct i3c_emul_data {
 	struct i3c_driver_data common;
+	/*
+	 * HDR-mode-entry state. Set by ENTHDR0 broadcast, cleared by
+	 * the next SDR-mode operation (per spec, the bus drops out of
+	 * HDR mode after a stop). Bus emul gates HDR-DDR private xfers
+	 * on this flag.
+	 */
+	uint8_t hdr_mode_entered;
 #ifdef CONFIG_I3C_USE_IBI
 	bool ibi_hj_ack;
 	bool ibi_crr_ack;
@@ -338,8 +345,20 @@ static int i3c_emul_do_ccc_one(struct i3c_emul *emul, struct i3c_ccc_payload *pa
 
 static int i3c_emul_do_ccc_broadcast(const struct device *dev, struct i3c_ccc_payload *payload)
 {
+	struct i3c_emul_data *data = dev->data;
 	struct i3c_device_desc *desc;
 	int ret = 0;
+
+	/*
+	 * ENTHDR0 puts the bus in HDR-DDR mode. Track that here so HDR-DDR
+	 * private xfers can be gated on a prior ENTHDR0 broadcast (real
+	 * controllers/targets reject HDR transfers issued in SDR mode).
+	 * Broadcast doesn't need to reach peripherals — the mode entry is
+	 * a bus-state transition observed by everyone implicitly.
+	 */
+	if (payload->ccc.id == I3C_CCC_ENTHDR0) {
+		data->hdr_mode_entered = I3C_MSG_HDR_DDR;
+	}
 
 	I3C_BUS_FOR_EACH_I3CDEV(dev, desc) {
 		struct i3c_emul *emul = i3c_emul_for_desc(desc);
@@ -604,6 +623,41 @@ static int i3c_emul_xfers(const struct device *dev, struct i3c_device_desc *targ
 
 		if (rc != -ENOSYS) {
 			return rc;
+		}
+	}
+
+	/*
+	 * HDR-mode private xfer prerequisites:
+	 *   1. Bus must be in HDR mode (controller broadcast ENTHDR0 for
+	 *      HDR-DDR). Real silicon rejects HDR ops issued in SDR mode.
+	 *   2. Target must advertise HDR support (BCR bit 5 = Advanced
+	 *      Capabilities). Controllers gate HDR on BCR before issuing.
+	 *
+	 * HDR mode is consumed by the next xfer regardless of outcome:
+	 * the bus exits HDR via the HDR-EXIT pattern after each transfer,
+	 * so a subsequent HDR-DDR xfer needs another ENTHDR0 broadcast.
+	 *
+	 * Once gated, the msgs (with their HDR flags set) flow through
+	 * the same @ref xfers callback as SDR. Peripherals that care about
+	 * HDR dispatch on @c msgs[i].flags & I3C_MSG_HDR themselves.
+	 */
+	{
+		struct i3c_emul_data *data = dev->data;
+		uint8_t entered = data->hdr_mode_entered;
+
+		data->hdr_mode_entered = 0;
+
+		if ((msgs[0].flags & I3C_MSG_HDR) != 0U &&
+		    msgs[0].hdr_mode == I3C_MSG_HDR_DDR) {
+			if (entered != I3C_MSG_HDR_DDR) {
+				return -EACCES;
+			}
+			if ((emul->bcr & I3C_BCR_ADV_CAPABILITIES) == 0U) {
+				return -ENOTSUP;
+			}
+			if ((emul->getcaps1 & I3C_CCC_GETCAPS1_HDR_DDR) == 0U) {
+				return -ENOTSUP;
+			}
 		}
 	}
 

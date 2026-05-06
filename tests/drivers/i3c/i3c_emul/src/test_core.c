@@ -23,15 +23,20 @@
 #define I3C_BUS DT_NODELABEL(i3c0)
 #define TARGET_A DT_NODELABEL(test_target_a)
 #define TARGET_B DT_NODELABEL(test_target_b)
+#define TARGET_D DT_NODELABEL(test_target_d)
+#define TARGET_E DT_NODELABEL(test_target_e)
 #define TARGET_I2C DT_NODELABEL(test_i2c_target)
 
 #define TARGET_A_PID		TEST_TARGET_A_PID
 #define TARGET_B_PID		TEST_TARGET_B_PID
 #define TARGET_B_INIT_DA	TEST_TARGET_B_INIT_DA
+#define TARGET_D_PID		TEST_TARGET_D_PID
+#define TARGET_E_PID		TEST_TARGET_E_PID
 
 static const struct device *bus = DEVICE_DT_GET(I3C_BUS);
 static const struct emul *target_a = EMUL_DT_GET(TARGET_A);
 static const struct emul *target_b = EMUL_DT_GET(TARGET_B);
+static const struct emul *target_d = EMUL_DT_GET(TARGET_D);
 
 static struct i3c_device_desc *find_desc(uint64_t pid)
 {
@@ -154,6 +159,138 @@ ZTEST(i3c_emul_core, test_legacy_i2c_on_i3c_routes_via_i2c_api)
 	zassert_ok(rc, "i2c_read: %d", rc);
 	zassert_equal(read_buf[0], write_buf[1], "read[0]");
 	zassert_equal(read_buf[1], write_buf[2], "read[1]");
+}
+
+/*
+ * Helper: broadcast ENTHDR0 to put the bus in HDR-DDR entry mode. There is
+ * no framework wrapper for ENTHDR0, so build the CCC payload directly.
+ */
+static int enthdr0_broadcast(const struct device *bus_dev)
+{
+	struct i3c_ccc_payload payload = {
+		.ccc.id = I3C_CCC_ENTHDR0,
+	};
+
+	return i3c_do_ccc(bus_dev, &payload);
+}
+
+ZTEST(i3c_emul_core, test_hdr_ddr_xfer_routes_to_hdr_handler)
+{
+	struct i3c_device_desc *desc = find_desc(TARGET_D_PID);
+	uint8_t write_buf[3] = {0x00, 0x77, 0x88};
+	struct i3c_msg msg = {
+		.buf = write_buf,
+		.len = sizeof(write_buf),
+		.flags = I3C_MSG_WRITE | I3C_MSG_HDR | I3C_MSG_STOP,
+		.hdr_mode = I3C_MSG_HDR_DDR,
+		.hdr_cmd_code = 0x12,
+	};
+	uint32_t before;
+	int rc;
+
+	zassert_not_null(desc, "target D desc");
+
+	/*
+	 * Per spec, an HDR-DDR private xfer is only legal after the
+	 * controller broadcasts ENTHDR0 to put the bus in HDR-DDR entry
+	 * mode. Without it, peripherals must reject the xfer.
+	 */
+	rc = enthdr0_broadcast(bus);
+	zassert_ok(rc, "ENTHDR0 broadcast: %d", rc);
+
+	before = test_target_get_hdr_ddr_xfer_count(target_d);
+	rc = i3c_transfer(desc, &msg, 1);
+	zassert_ok(rc, "i3c_transfer (HDR-DDR after ENTHDR0): %d", rc);
+	zassert_equal(test_target_get_hdr_ddr_xfer_count(target_d), before + 1,
+		      "peripheral's hdr_ddr_xfers callback should have fired");
+}
+
+ZTEST(i3c_emul_core, test_hdr_ddr_xfer_rejected_without_enthdr0)
+{
+	struct i3c_device_desc *desc = find_desc(TARGET_D_PID);
+	uint8_t write_buf[2] = {0x00, 0xAA};
+	struct i3c_msg msg = {
+		.buf = write_buf,
+		.len = sizeof(write_buf),
+		.flags = I3C_MSG_WRITE | I3C_MSG_HDR | I3C_MSG_STOP,
+		.hdr_mode = I3C_MSG_HDR_DDR,
+		.hdr_cmd_code = 0x34,
+	};
+	uint32_t before;
+	int rc;
+
+	zassert_not_null(desc, "target D desc");
+
+	/*
+	 * No ENTHDR0 broadcast first. Bus emulator must reject the
+	 * HDR-DDR xfer because the bus is still in SDR mode. Counter
+	 * must NOT advance.
+	 */
+	before = test_target_get_hdr_ddr_xfer_count(target_d);
+	rc = i3c_transfer(desc, &msg, 1);
+	zassert_not_equal(rc, 0,
+			  "HDR-DDR xfer without prior ENTHDR0 must be rejected");
+	zassert_equal(test_target_get_hdr_ddr_xfer_count(target_d), before,
+		      "peripheral's hdr_ddr_xfers callback must not fire");
+}
+
+ZTEST(i3c_emul_core, test_hdr_ddr_xfer_rejected_by_non_hdr_capable_target)
+{
+	struct i3c_device_desc *desc = find_desc(TARGET_A_PID);
+	uint8_t write_buf[2] = {0x00, 0xAA};
+	struct i3c_msg msg = {
+		.buf = write_buf,
+		.len = sizeof(write_buf),
+		.flags = I3C_MSG_WRITE | I3C_MSG_HDR | I3C_MSG_STOP,
+		.hdr_mode = I3C_MSG_HDR_DDR,
+		.hdr_cmd_code = 0x12,
+	};
+	int rc;
+
+	zassert_not_null(desc, "target A desc");
+
+	/*
+	 * Even after ENTHDR0, target A doesn't advertise HDR support
+	 * (BCR bit 5 = Advanced Capabilities is clear in DT). The
+	 * peripheral must reject the HDR-DDR xfer regardless of bus mode.
+	 */
+	rc = enthdr0_broadcast(bus);
+	zassert_ok(rc, "ENTHDR0 broadcast: %d", rc);
+
+	rc = i3c_transfer(desc, &msg, 1);
+	zassert_not_equal(rc, 0,
+			  "HDR-DDR to a non-HDR-capable target must fail");
+}
+
+ZTEST(i3c_emul_core, test_hdr_ddr_xfer_rejected_when_getcaps_lacks_hdr_ddr)
+{
+	struct i3c_device_desc *desc = find_desc(TARGET_E_PID);
+	uint8_t write_buf[2] = {0x00, 0xAA};
+	struct i3c_msg msg = {
+		.buf = write_buf,
+		.len = sizeof(write_buf),
+		.flags = I3C_MSG_WRITE | I3C_MSG_HDR | I3C_MSG_STOP,
+		.hdr_mode = I3C_MSG_HDR_DDR,
+		.hdr_cmd_code = 0x12,
+	};
+	int rc;
+
+	zassert_not_null(desc, "target E desc");
+
+	/*
+	 * Target E has BCR bit 5 set (Advanced Capabilities — controllers
+	 * may issue GETCAPS), but no supports-hdr-ddr property. Its GETCAPS
+	 * Format 1 response carries no HDR-mode bits. Bus emul must gate
+	 * HDR-DDR on the cached GETCAPS bit, not just BCR — otherwise the
+	 * BCR-only check above is too coarse and would let HDR-DDR through
+	 * to a non-HDR-capable target that just happens to support GETCAPS.
+	 */
+	rc = enthdr0_broadcast(bus);
+	zassert_ok(rc, "ENTHDR0 broadcast: %d", rc);
+
+	rc = i3c_transfer(desc, &msg, 1);
+	zassert_not_equal(rc, 0,
+			  "HDR-DDR must be rejected when GETCAPS doesn't advertise it");
 }
 
 static void *i3c_emul_setup(void)

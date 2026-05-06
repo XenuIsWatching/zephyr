@@ -18,3 +18,9 @@ properties:
   dcr:
     type: int
     default: 0
+
+  supports-hdr-ddr:
+    type: boolean
+    description: |
+      The synthetic peripheral advertises HDR-DDR support in its
+      GETCAPS Format 1 response and accepts HDR-DDR private xfers.

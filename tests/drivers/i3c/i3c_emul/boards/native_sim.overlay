@@ -43,6 +43,35 @@
 		};
 
 		/*
+		 * HDR-DDR-capable target. BCR bit 5 (Advanced Capabilities)
+		 * is set so the controller knows GETCAPS / HDR are supported.
+		 * supports-hdr-ddr makes the peripheral advertise the bit in
+		 * its GETCAPS Format 1 response and accept HDR-DDR private
+		 * xfers (after the controller broadcasts ENTHDR0).
+		 */
+		test_target_d: target_d@7700009999aaabbccdd {
+			compatible = "zephyr,i3c-emul-test-target";
+			reg = <0x77 0x9999 0xAABBCCDD>;
+			supports-hdr-ddr;
+			bcr = <0x20>;
+			dcr = <0x6c>;
+		};
+
+		/*
+		 * Advanced-capabilities target that does NOT support HDR-DDR.
+		 * BCR bit 5 is set (so a controller knows GETCAPS is meaningful),
+		 * but the GETCAPS response carries no HDR-mode bits. Used to
+		 * verify the bus emulator gates HDR-DDR on the cached GETCAPS
+		 * bit and not just BCR.
+		 */
+		test_target_e: target_e@4400001111223344556 {
+			compatible = "zephyr,i3c-emul-test-target";
+			reg = <0x44 0x1111 0x22334456>;
+			bcr = <0x20>;
+			dcr = <0x6c>;
+		};
+
+		/*
 		 * Legacy-I2C-on-I3C peripheral. reg = <addr 0 lvr> per the
 		 * i3c subsystem's i2c-device convention; the bus emulator
 		 * routes its i2c_api.transfer to this node's standard

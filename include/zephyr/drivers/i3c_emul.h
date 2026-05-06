@@ -88,6 +88,15 @@ struct i3c_emul {
 	 * matching bit before driving the event.
 	 */
 	uint8_t enabled_events;
+
+	/**
+	 * Cached GETCAPS Format 1 byte 0 — peripheral's HDR-mode capability
+	 * advertisement. Filled by the peripheral at init from the same
+	 * source it uses for its GETCAPS handler. Bus emulator gates HDR
+	 * private xfers (e.g. HDR-DDR) on the matching bit, mirroring what
+	 * a real controller does after caching a target's GETCAPS reply.
+	 */
+	uint8_t getcaps1;
 };
 
 /**
@@ -143,13 +152,17 @@ typedef int (*i3c_emul_set_dynamic_addr_t)(const struct emul *target, uint8_t dy
  * Mandatory members: @ref xfers and @ref do_ccc. All other callbacks may be
  * @c NULL and the bus emulator will treat them as no-ops returning 0
  * (or @c -ENOTSUP for IBI when the target is not IBI-capable).
+ *
+ * HDR-mode private xfers (e.g. HDR-DDR) flow through @ref xfers — the bus
+ * emulator validates HDR mode entry and target BCR up front, then hands
+ * the @c i3c_msg array (with the HDR flags set) to @ref xfers. Peripherals
+ * that handle HDR identically to SDR need no extra code; peripherals with
+ * separate HDR semantics dispatch on @c msgs[i].flags & I3C_MSG_HDR.
  */
 struct i3c_emul_api {
 	i3c_emul_xfers_t xfers;
 	i3c_emul_do_ccc_t do_ccc;
 	i3c_emul_set_dynamic_addr_t set_dynamic_addr;
-	/** Optional. If NULL, bus emulator routes HDR-DDR through @ref xfers. */
-	i3c_emul_xfers_t hdr_ddr_xfers;
 };
 
 /**

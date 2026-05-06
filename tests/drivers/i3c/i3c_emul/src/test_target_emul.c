@@ -38,11 +38,19 @@ struct test_target_cfg {
 	uint8_t bcr;
 	uint8_t dcr;
 	bool supports_setaasa;
+	bool supports_hdr_ddr;
 };
 
 struct test_target_data {
 	uint8_t regs[TEST_TARGET_REG_SIZE];
 	uint8_t cursor;
+
+	/* HDR-DDR private xfer count. Bumped by test_target_xfers when
+	 * a msg has the I3C_MSG_HDR flag with hdr_mode == HDR_DDR, so
+	 * tests can verify the bus emulator gates HDR correctly without
+	 * stripping the flag before delivery to the peripheral.
+	 */
+	uint32_t hdr_ddr_xfer_count;
 
 	/* MRL / MWL state set via SETMRL / SETMWL, returned via GETMRL / GETMWL. */
 	uint16_t mrl;
@@ -64,6 +72,16 @@ static int test_target_xfers(const struct emul *target, struct i3c_msg *msgs, ui
 
 	for (uint8_t i = 0; i < num_msgs; i++) {
 		struct i3c_msg *m = &msgs[i];
+
+		/*
+		 * Tests assert on this counter to verify that HDR-DDR
+		 * private xfers reach the peripheral via the same xfers
+		 * callback as SDR (with I3C_MSG_HDR set in the flags).
+		 */
+		if ((m->flags & I3C_MSG_HDR) != 0U &&
+		    m->hdr_mode == I3C_MSG_HDR_DDR) {
+			data->hdr_ddr_xfer_count++;
+		}
 
 		if ((m->flags & I3C_MSG_RW_MASK) == I3C_MSG_WRITE) {
 			if (m->len == 0U) {
@@ -159,6 +177,18 @@ static int test_target_do_ccc(const struct emul *target, struct i3c_ccc_payload 
 		if (tp != NULL && tp->data != NULL && tp->data_len >= 2U) {
 			sys_put_be16(data->status_fmt1, tp->data);
 			tp->num_xfer = 2U;
+		}
+		return 0;
+	case I3C_CCC_GETCAPS:
+		/*
+		 * GETCAPS Format 1 response: 1-4 bytes of capability flags.
+		 * GETCAPS1 byte 0 carries HDR-mode bits; we set HDR-DDR per
+		 * the supports-hdr-ddr DT property. Returning a single byte
+		 * is spec-legal — the framework helper zero-pads the rest.
+		 */
+		if (tp != NULL && tp->data != NULL && tp->data_len >= 1U) {
+			tp->data[0] = cfg->supports_hdr_ddr ? I3C_CCC_GETCAPS1_HDR_DDR : 0U;
+			tp->num_xfer = 1U;
 		}
 		return 0;
 	case I3C_CCC_GETACCCR:
@@ -398,6 +428,13 @@ bool test_target_event_enabled(const struct emul *target, uint8_t event_mask)
 	return (target->bus.i3c->enabled_events & event_mask) == event_mask;
 }
 
+uint32_t test_target_get_hdr_ddr_xfer_count(const struct emul *target)
+{
+	const struct test_target_data *data = target->data;
+
+	return data->hdr_ddr_xfer_count;
+}
+
 static const struct test_target_backend_api test_target_backend = {
 	.get_reg = test_target_get_reg,
 	.set_reg = test_target_set_reg,
@@ -424,6 +461,7 @@ static int test_target_init(const struct emul *target, const struct device *pare
 	target->bus.i3c->pid = cfg->pid;
 	target->bus.i3c->bcr = cfg->bcr;
 	target->bus.i3c->dcr = cfg->dcr;
+	target->bus.i3c->getcaps1 = cfg->supports_hdr_ddr ? I3C_CCC_GETCAPS1_HDR_DDR : 0U;
 
 	/*
 	 * Powered-up baseline per the I3C spec: targets come up with INTR
@@ -442,6 +480,7 @@ static int test_target_init(const struct emul *target, const struct device *pare
 		.bcr = DT_INST_PROP(n, bcr),                                                       \
 		.dcr = DT_INST_PROP(n, dcr),                                                       \
 		.supports_setaasa = DT_INST_PROP(n, supports_setaasa),                             \
+		.supports_hdr_ddr = DT_INST_PROP(n, supports_hdr_ddr),                             \
 	};                                                                                         \
 	I3C_DEVICE_DT_INST_DEFINE(n, NULL, NULL, &test_target_data_##n, &test_target_cfg_##n,      \
 				  POST_KERNEL, CONFIG_APPLICATION_INIT_PRIORITY, NULL);            \
