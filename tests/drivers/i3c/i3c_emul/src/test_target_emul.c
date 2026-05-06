@@ -227,10 +227,11 @@ static int test_target_do_ccc(const struct emul *target, struct i3c_ccc_payload 
 	case I3C_CCC_SETDASA:
 		/*
 		 * SETDASA assigns a dynamic address from the static address.
-		 * Per spec it is only legal for a target that does not
-		 * already have one — NACK if dyn_addr is already set.
+		 * Per spec it is only legal for a target that has a static
+		 * address and does not yet have a dynamic one — NACK if the
+		 * peripheral has no static_addr or already has a dyn_addr.
 		 */
-		if (data->dyn_addr != 0U) {
+		if (target->bus.i3c->static_addr == 0U || data->dyn_addr != 0U) {
 			return -EACCES;
 		}
 		if (tp != NULL && tp->data != NULL && tp->data_len >= 1U) {
