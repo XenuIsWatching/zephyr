@@ -1,0 +1,19 @@
+# Copyright (c) 2026 Meta Platforms
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  Loopback target peripheral entry. Describes the static-address /
+  PID portion of the loopback target so the controller bus can
+  enumerate it during DAA. All other identity (BCR, DCR, MRL, MWL,
+  supported HDR modes) is queried at runtime from the target-mode
+  controller via i3c_config_get_target() so the test never duplicates
+  the truth.
+
+  reg cells: <static_addr  pid_hi  pid_lo>
+    static_addr  — 0 if no static address (only DAA assignment)
+    pid_hi       — bits[47:32] of the 48-bit Provisioned ID
+    pid_lo       — bits[31:0]  of the 48-bit Provisioned ID
+
+compatible: "zephyr,i3c-loopback-target"
+
+include: i3c-device.yaml

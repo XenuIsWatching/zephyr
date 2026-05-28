@@ -1,0 +1,21 @@
+# Copyright (c) 2026 Meta Platforms
+# SPDX-License-Identifier: Apache-2.0
+
+common:
+  tags:
+    - drivers
+    - i3c
+    - loopback
+  harness: ztest
+  harness_config:
+    fixture: i3c_loopback
+
+tests:
+  drivers.i3c.loopback:
+    # In-tree boards listed here are built-only smoke targets to catch
+    # source/binding regressions. To actually run the suite the user
+    # must wire two i3c controllers together and supply the
+    # `i3c_loopback` fixture to twister.
+    build_only: true
+    platform_allow:
+      - nucleo_h503rb
