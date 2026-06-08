@@ -23,6 +23,9 @@ static struct k_work_q i3c_ibi_work_q;
 
 static sys_slist_t i3c_ibi_work_nodes_free;
 
+/* Spinlock protecting i3c_ibi_work_nodes_free list access from ISR and thread contexts */
+static struct k_spinlock ibi_work_lock;
+
 static inline int ibi_work_submit(struct i3c_ibi_work *ibi_node)
 {
 	return k_work_submit_to_queue(&i3c_ibi_work_q, &ibi_node->work);
@@ -32,9 +35,13 @@ int i3c_ibi_work_enqueue(struct i3c_ibi_work *ibi_work)
 {
 	sys_snode_t *node;
 	struct i3c_ibi_work *ibi_node;
+	k_spinlock_key_t key;
 	int ret;
 
+	key = k_spin_lock(&ibi_work_lock);
 	node = sys_slist_get(&i3c_ibi_work_nodes_free);
+	k_spin_unlock(&ibi_work_lock, key);
+
 	if (node == NULL) {
 		ret = -ENOMEM;
 		goto out;
@@ -58,9 +65,13 @@ int i3c_ibi_work_enqueue_target_irq(struct i3c_device_desc *target,
 {
 	sys_snode_t *node;
 	struct i3c_ibi_work *ibi_node;
+	k_spinlock_key_t key;
 	int ret;
 
+	key = k_spin_lock(&ibi_work_lock);
 	node = sys_slist_get(&i3c_ibi_work_nodes_free);
+	k_spin_unlock(&ibi_work_lock, key);
+
 	if (node == NULL) {
 		ret = -ENOMEM;
 		goto out;
@@ -90,9 +101,13 @@ int i3c_ibi_work_enqueue_controller_request(struct i3c_device_desc *target)
 {
 	sys_snode_t *node;
 	struct i3c_ibi_work *ibi_node;
+	k_spinlock_key_t key;
 	int ret;
 
+	key = k_spin_lock(&ibi_work_lock);
 	node = sys_slist_get(&i3c_ibi_work_nodes_free);
+	k_spin_unlock(&ibi_work_lock, key);
+
 	if (node == NULL) {
 		ret = -ENOMEM;
 		goto out;
@@ -116,9 +131,13 @@ int i3c_ibi_work_enqueue_hotjoin(const struct device *dev)
 {
 	sys_snode_t *node;
 	struct i3c_ibi_work *ibi_node;
+	k_spinlock_key_t key;
 	int ret;
 
+	key = k_spin_lock(&ibi_work_lock);
 	node = sys_slist_get(&i3c_ibi_work_nodes_free);
+	k_spin_unlock(&ibi_work_lock, key);
+
 	if (node == NULL) {
 		ret = -ENOMEM;
 		goto out;
@@ -144,9 +163,13 @@ int i3c_ibi_work_enqueue_cb(const struct device *dev,
 {
 	sys_snode_t *node;
 	struct i3c_ibi_work *ibi_node;
+	k_spinlock_key_t key;
 	int ret;
 
+	key = k_spin_lock(&ibi_work_lock);
 	node = sys_slist_get(&i3c_ibi_work_nodes_free);
+	k_spin_unlock(&ibi_work_lock, key);
+
 	if (node == NULL) {
 		ret = -ENOMEM;
 		goto out;
@@ -245,8 +268,10 @@ static void i3c_ibi_work_handler(struct k_work *work)
 			LOG_ERR("Error re-adding IBI work %p", ibi_node);
 		}
 	} else {
-		/* Add the now processed node back to the free list */
+		k_spinlock_key_t key = k_spin_lock(&ibi_work_lock);
+
 		sys_slist_append(&i3c_ibi_work_nodes_free, (sys_snode_t *)ibi_node);
+		k_spin_unlock(&ibi_work_lock, key);
 	}
 }
 
