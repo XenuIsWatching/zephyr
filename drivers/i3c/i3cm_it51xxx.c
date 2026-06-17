@@ -1428,7 +1428,7 @@ static void it51xxx_process_ibi_payload(const struct device *dev)
 		}
 	}
 
-	if (i3c_ibi_work_enqueue_target_irq(target, data->dlm_data.rx_data,
+	if (i3c_ibi_submit_target_irq(target, data->dlm_data.rx_data,
 					    MIN(payload_sz, CONFIG_I3C_IBI_MAX_PAYLOAD_SIZE)) !=
 	    0) {
 		LOG_INST_ERR(cfg->log, "failed to enqueue tir work");
@@ -1500,7 +1500,7 @@ static void it51xxx_i3cm_isr(const struct device *dev)
 			it51xxx_accept_ibi(dev, data->ibi_hj_response);
 			sys_write8(IBI_INTERRUPT, cfg->base + I3CM01_STATUS);
 			if (data->ibi_hj_response) {
-				if (i3c_ibi_work_enqueue_hotjoin(dev) != 0) {
+				if (i3c_ibi_submit_hotjoin(dev) != 0) {
 					LOG_INST_ERR(cfg->log, "failed to enqueue hot-join work");
 				}
 			}

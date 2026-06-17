@@ -82,12 +82,38 @@ config I3C_IBI_MAX_PAYLOAD_SIZE
 	help
 	  Maximum IBI payload size.
 
-menuconfig I3C_IBI_WORKQUEUE
-	bool "Use IBI Workqueue"
+config I3C_IBI_DISPATCH
+	bool
 	help
-	  Use global workqueue for processing IBI.
+	  Selected by controller drivers that need an IBI dispatch backend.
+	  This is enabled by a driver if needed.
 
-	  This is enabled by driver if needed.
+choice I3C_IBI_METHOD
+	prompt "IBI handling method"
+	depends on I3C_IBI_DISPATCH
+	default I3C_IBI_WORKQUEUE
+	help
+	  Select how received In-Band Interrupts are dispatched to their
+	  handlers.
+
+config I3C_IBI_WORKQUEUE
+	bool "IBI workqueue"
+	help
+	  Process IBIs from a dedicated global workqueue thread. The target
+	  callback runs in thread context, so it may perform blocking bus
+	  operations.
+
+config I3C_IBI_RTIO
+	bool "IBI RTIO"
+	select I3C_RTIO
+	help
+	  Dispatch target interrupt IBIs directly in the controller's context
+	  (e.g. its ISR) and route hot-join Dynamic Address Assignment through
+	  the controller's RTIO submit path (i3c_iodev_submit), avoiding the
+	  dedicated IBI workqueue thread. Intended for RTIO-based targets whose
+	  IBI callback is non-blocking and ISR-safe.
+
+endchoice
 
 if I3C_IBI_WORKQUEUE
 
@@ -118,6 +144,19 @@ config I3C_IBI_WORKQUEUE_VERBOSE_DEBUG
 	  the IBI payload.
 
 endif # I3C_IBI_WORKQUEUE
+
+if I3C_IBI_RTIO
+
+config I3C_IBI_RTIO_LENGTH
+	int "IBI RTIO queue length"
+	default 8
+	help
+	  Maximum number of in-flight control-plane IBIs (hot-join,
+	  controllership request and controller callbacks) that can be
+	  queued by the RTIO IBI backend. Target interrupt IBIs are
+	  dispatched directly and do not consume these entries.
+
+endif # I3C_IBI_RTIO
 
 endif # I3C_USE_IBI
 

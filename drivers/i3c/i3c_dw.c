@@ -1276,7 +1276,7 @@ static void dw_i3c_handle_tir(const struct device *dev, uint32_t ibi_status)
 		read_ibi_fifo(dev, ibi_data, len);
 	}
 
-	if (i3c_ibi_work_enqueue_target_irq(desc, ibi_data, len) != 0) {
+	if (i3c_ibi_submit_target_irq(desc, ibi_data, len) != 0) {
 		LOG_ERR("%s: Error enqueue IBI IRQ work", dev->name);
 	}
 }
@@ -1288,7 +1288,7 @@ static void dw_i3c_handle_hj(const struct device *dev, uint32_t ibi_status)
 		return;
 	}
 
-	if (i3c_ibi_work_enqueue_hotjoin(dev) != 0) {
+	if (i3c_ibi_submit_hotjoin(dev) != 0) {
 		LOG_ERR("%s: Error enqueue IBI HJ work", dev->name);
 	}
 }
@@ -1309,7 +1309,7 @@ static void dw_i3c_handle_mr(const struct device *dev, uint32_t ibi_status)
 		return;
 	}
 
-	if (i3c_ibi_work_enqueue_controller_request(desc) != 0) {
+	if (i3c_ibi_submit_controller_request(desc) != 0) {
 		LOG_ERR("%s: Error enqueue IBI MR work", dev->name);
 	}
 }
@@ -1603,7 +1603,7 @@ static int i3c_dw_irq(const struct device *dev)
 		dw_i3c_update_interrupt_mask(dev);
 
 		if (dw_i3c_is_current_controller(dev)) {
-			i3c_ibi_work_enqueue_cb(dev, i3c_sec_handoffed);
+			i3c_ibi_submit_cb(dev, i3c_sec_handoffed);
 			if (data->target_config != NULL &&
 			    data->target_config->callbacks != NULL &&
 			    data->target_config->callbacks->controller_handoff_cb != NULL) {

@@ -2948,7 +2948,7 @@ static void cdns_i3c_handle_ibi(const struct device *dev, uint32_t ibir)
 		data->ibi_buf.ibi_data_cnt = 0;
 	}
 
-	if (i3c_ibi_work_enqueue_target_irq(desc, data->ibi_buf.ibi_data, ibi_len) != 0) {
+	if (i3c_ibi_submit_target_irq(desc, data->ibi_buf.ibi_data, ibi_len) != 0) {
 		LOG_ERR("%s: Error enqueue IBI IRQ work", dev->name);
 	}
 }
@@ -2987,7 +2987,7 @@ static void cdns_i3c_handle_cr(const struct device *dev, uint32_t ibir)
 		return;
 	}
 
-	if (i3c_ibi_work_enqueue_controller_request(desc) != 0) {
+	if (i3c_ibi_submit_controller_request(desc) != 0) {
 		LOG_ERR("%s: Error enqueue IBI IRQ work", dev->name);
 	}
 }
@@ -3007,7 +3007,7 @@ static void cdns_i3c_handle_hj(const struct device *dev, uint32_t ibir)
 	}
 
 	/* TODO: disable CTRL_HJ_DISEC and process auto-ENTDAA*/
-	if (i3c_ibi_work_enqueue_hotjoin(dev) != 0) {
+	if (i3c_ibi_submit_hotjoin(dev) != 0) {
 		LOG_ERR("%s: Error enqueue IBI HJ work", dev->name);
 	}
 }
@@ -3333,7 +3333,7 @@ static void cdns_i3c_irq_handler(const struct device *dev)
 	if (int_sl & SLV_INT_MR_DONE) {
 #ifdef CONFIG_I3C_USE_IBI
 		cdns_i3c_target_ibi_cr_complete(dev);
-		i3c_ibi_work_enqueue_cb(dev, i3c_sec_handoffed);
+		i3c_ibi_submit_cb(dev, i3c_sec_handoffed);
 		if (target_cb != NULL && target_cb->controller_handoff_cb) {
 			target_cb->controller_handoff_cb(data->target_config);
 		}

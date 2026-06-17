@@ -1220,15 +1220,13 @@ out_ccc_stop:
 /**
  * @brief Callback to service target initiated IBIs.
  *
- * @param work Pointer to k_work item.
+ * @param dev Pointer to controller device driver instance.
  */
-static void max32_i3c_ibi_work(struct k_work *work)
+static void max32_i3c_ibi_work(const struct device *dev)
 {
 	uint8_t payload[CONFIG_I3C_IBI_MAX_PAYLOAD_SIZE];
 	size_t payload_sz = 0;
 
-	struct i3c_ibi_work *i3c_ibi_work = CONTAINER_OF(work, struct i3c_ibi_work, work);
-	const struct device *dev = i3c_ibi_work->controller;
 	const struct max32_i3c_config *config = dev->config;
 	struct max32_i3c_data *data = dev->data;
 	mxc_i3c_regs_t *regs = config->regs;
@@ -1239,7 +1237,7 @@ static void max32_i3c_ibi_work(struct k_work *work)
 	k_mutex_lock(&data->lock, K_FOREVER);
 
 	if (max32_i3c_state_get(regs) != MXC_V_I3C_CONT_STATUS_STATE_TARG_REQ) {
-		LOG_DBG("IBI work %p running not because of IBI", work);
+		LOG_DBG("IBI work running not because of IBI");
 		LOG_DBG("CONT_STATUS 0x%08x CONT_ERRWARN 0x%08x", regs->cont_status,
 			regs->cont_errwarn);
 		max32_i3c_request_emit_stop(data, regs);
@@ -1329,7 +1327,7 @@ static void max32_i3c_ibi_work(struct k_work *work)
 	switch (ibitype) {
 	case MXC_V_I3C_CONT_STATUS_IBITYPE_IBI:
 		if ((target != NULL) &&
-		    (i3c_ibi_work_enqueue_target_irq(target, &payload[0], payload_sz) != 0)) {
+		    (i3c_ibi_submit_target_irq(target, &payload[0], payload_sz) != 0)) {
 			LOG_ERR("Error enqueue IBI IRQ work");
 		}
 
@@ -1337,7 +1335,7 @@ static void max32_i3c_ibi_work(struct k_work *work)
 		max32_i3c_request_emit_stop(data, regs);
 		break;
 	case MXC_V_I3C_CONT_STATUS_IBITYPE_HOTJOIN_REQ:
-		if (i3c_ibi_work_enqueue_hotjoin(dev) != 0) {
+		if (i3c_ibi_submit_hotjoin(dev) != 0) {
 			LOG_ERR("Error enqueue IBI HJ work");
 		}
 		break;
@@ -1579,7 +1577,7 @@ static void max32_i3c_isr(const struct device *dev)
 		/*
 		 * Handle IBI in workqueue.
 		 */
-		err = i3c_ibi_work_enqueue_cb(dev, max32_i3c_ibi_work);
+		err = i3c_ibi_submit_cb(dev, max32_i3c_ibi_work);
 		if (err) {
 			LOG_ERR("Error enqueuing ibi work, err %d", err);
 			regs->cont_inten = MXC_F_I3C_CONT_INTEN_TARG_START;

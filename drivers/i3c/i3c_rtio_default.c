@@ -66,6 +66,17 @@ void i3c_iodev_submit_work_handler(struct rtio_iodev_sqe *txn_first)
 	int rc = 0;
 	struct rtio_iodev_sqe *txn_last = txn_first;
 
+	/* Dynamic Address Assignment operates on the controller, not a target. */
+	if (txn_first->sqe.op == RTIO_OP_I3C_DAA) {
+		rc = i3c_do_daa(data->bus);
+		if (rc != 0) {
+			rtio_iodev_sqe_err(txn_first, rc);
+		} else {
+			rtio_iodev_sqe_ok(txn_first, 0);
+		}
+		return;
+	}
+
 	/* TODO: there really needs to be a compile time way to get the i3c_device_desc */
 	desc = i3c_device_find(data->bus, &data->dev_id);
 	if (!desc) {

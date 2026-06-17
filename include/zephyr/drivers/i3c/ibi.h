@@ -84,49 +84,6 @@ struct i3c_ibi_payload {
 };
 
 /**
- * @brief Node about a queued IBI.
- */
-struct i3c_ibi_work {
-	sys_snode_t node;
-
-	/**
-	 * k_work struct.
-	 */
-	struct k_work work;
-
-	/**
-	 * IBI type.
-	 */
-	enum i3c_ibi_type type;
-
-	union {
-		/**
-		 * Use for @see I3C_IBI_HOTJOIN.
-		 */
-		const struct device *controller;
-
-		/**
-		 * Use for @see I3C_IBI_TARGET_INTR,
-		 * and @see I3C_IBI_CONTROLLER_ROLE_REQUEST.
-		 */
-		struct i3c_device_desc *target;
-	};
-
-	union {
-		/**
-		 * IBI payload.
-		 */
-		struct i3c_ibi_payload payload;
-
-		/**
-		 * Generic workqueue callback when
-		 * type is I3C_IBI_WORKQUEUE_CB.
-		 */
-		k_work_handler_t work_cb;
-	};
-};
-
-/**
  * @brief Function called when In-Band Interrupt received from target device.
  *
  * This function is invoked by the controller when the controller
@@ -146,90 +103,100 @@ struct i3c_ibi_work {
 typedef int (*i3c_target_ibi_cb_t)(struct i3c_device_desc *target,
 				   struct i3c_ibi_payload *payload);
 
-
 /**
- * @brief Queue an IBI work item for future processing.
+ * @brief Controller callback used to defer driver-specific IBI handling.
  *
- * This queues up an IBI work item in the IBI workqueue
- * for future processing.
+ * Used with i3c_ibi_submit_cb() when a controller needs to run driver-specific
+ * processing for an IBI (for example reading the IBI payload from hardware or
+ * performing a controllership handoff).
  *
- * Note that this will copy the @p ibi_work struct into
- * internal structure. If there is not enough space to
- * copy the @p ibi_work struct, this returns -ENOMEM.
- *
- * @param ibi_work Pointer to the IBI work item struct.
- *
- * @retval 0 If work item is successfully queued.
- * @retval -ENOMEM If no more free internal node to
- *                 store IBI work item.
- * @retval Others @see k_work_submit_to_queue
+ * @param dev Controller device driver instance.
  */
-int i3c_ibi_work_enqueue(struct i3c_ibi_work *ibi_work);
+typedef void (*i3c_ibi_cb_t)(const struct device *dev);
+
 
 /**
- * @brief Queue a target interrupt IBI for future processing.
+ * @brief Submit a received target interrupt IBI.
  *
- * This queues up a target interrupt IBI in the IBI workqueue
- * for future processing.
+ * Called by a controller driver, typically from its ISR, when a target
+ * interrupt IBI (and any payload it carried) has been received. The IBI is
+ * dispatched to the target's registered @ref i3c_target_ibi_cb_t.
+ *
+ * The dispatch context depends on the selected IBI backend:
+ * - @kconfig{CONFIG_I3C_IBI_WORKQUEUE}: the payload is copied and the callback
+ *   is deferred to the IBI workqueue thread, where it may block.
+ * - @kconfig{CONFIG_I3C_IBI_RTIO}: the callback is invoked directly in the
+ *   caller's context (e.g. the controller ISR). It must be ISR safe and
+ *   non blocking.
  *
  * @param target Pointer to target device descriptor.
- * @param payload Pointer to IBI payload byte array.
+ * @param payload Pointer to IBI payload byte array, or NULL if there is none.
  * @param payload_len Length of payload byte array.
  *
- * @retval 0 If work item is successfully queued.
- * @retval -ENOMEM If no more free internal node to
- *                 store IBI work item.
- * @retval Others @see k_work_submit_to_queue
+ * @retval 0 If the IBI was successfully queued (workqueue backend) or the
+ *           callback accepted it (RTIO backend).
+ * @retval -ENOMEM If there is no free internal node to store the IBI
+ *                 (workqueue backend).
+ * @retval -ENODEV If the target has no registered callback (RTIO backend).
+ * @retval Others Value returned by @ref k_work_submit_to_queue or by the
+ *                target callback.
  */
-int i3c_ibi_work_enqueue_target_irq(struct i3c_device_desc *target,
+int i3c_ibi_submit_target_irq(struct i3c_device_desc *target,
 				    uint8_t *payload, size_t payload_len);
 
 /**
- * @brief Queue a controllership request IBI for future processing.
+ * @brief Submit a received controllership request IBI.
  *
- * This queues up a controllership request IBI in the IBI workqueue
- * for future processing.
+ * Called by a controller driver when a target requests the controller role.
+ * The handoff (@ref i3c_device_controller_handoff) performs blocking bus
+ * operations and is therefore always run in thread context: the IBI workqueue
+ * thread (@kconfig{CONFIG_I3C_IBI_WORKQUEUE}) or the RTIO work queue
+ * (@kconfig{CONFIG_I3C_IBI_RTIO}).
  *
  * @param target Pointer to target device descriptor.
  *
- * @retval 0 If work item is successfully queued.
- * @retval -ENOMEM If no more free internal node to
- *                 store IBI work item.
+ * @retval 0 If the request was successfully submitted.
+ * @retval -ENOMEM If there is no free internal node to store the IBI.
  * @retval Others @see k_work_submit_to_queue
  */
-int i3c_ibi_work_enqueue_controller_request(struct i3c_device_desc *target);
+int i3c_ibi_submit_controller_request(struct i3c_device_desc *target);
 
 /**
- * @brief Queue a hot join IBI for future processing.
+ * @brief Submit a received hot join IBI.
  *
- * This queues up a hot join IBI in the IBI workqueue
- * for future processing.
+ * Called by a controller driver when a hot join request is received. The
+ * resulting Dynamic Address Assignment (and, on a bus with a secondary
+ * controller, the DEFTGTS refresh) performs blocking bus operations and is run
+ * in thread context: the IBI workqueue thread
+ * (@kconfig{CONFIG_I3C_IBI_WORKQUEUE}) or the RTIO work queue
+ * (@kconfig{CONFIG_I3C_IBI_RTIO}).
  *
  * @param dev Pointer to controller device driver instance.
  *
- * @retval 0 If work item is successfully queued.
- * @retval -ENOMEM If no more free internal node to
- *                 store IBI work item.
+ * @retval 0 If the hot join was successfully submitted.
+ * @retval -ENOMEM If there is no free internal node to store the IBI.
  * @retval Others @see k_work_submit_to_queue
  */
-int i3c_ibi_work_enqueue_hotjoin(const struct device *dev);
+int i3c_ibi_submit_hotjoin(const struct device *dev);
 
 /**
- * @brief Queue a generic callback for future processing.
+ * @brief Submit a controller callback for deferred processing.
  *
- * This queues up a generic callback in the IBI workqueue
- * for future processing.
+ * Used by controller drivers to run driver specific IBI handling that needs
+ * thread context, such as reading the IBI payload from hardware or completing
+ * a controllership handoff. The callback is invoked with @p dev from the IBI
+ * workqueue thread (@kconfig{CONFIG_I3C_IBI_WORKQUEUE}) or the RTIO work queue
+ * (@kconfig{CONFIG_I3C_IBI_RTIO}).
  *
  * @param dev Pointer to controller device driver instance.
- * @param work_cb Callback function.
+ * @param cb Callback function invoked with @p dev.
  *
- * @retval 0 If work item is successfully queued.
- * @retval -ENOMEM If no more free internal node to
- *                 store IBI work item.
+ * @retval 0 If the callback was successfully submitted.
+ * @retval -ENOMEM If there is no free internal node to store the IBI.
  * @retval Others @see k_work_submit_to_queue
  */
-int i3c_ibi_work_enqueue_cb(const struct device *dev,
-			    k_work_handler_t work_cb);
+int i3c_ibi_submit_cb(const struct device *dev,
+			    i3c_ibi_cb_t cb);
 
 #ifdef __cplusplus
 }

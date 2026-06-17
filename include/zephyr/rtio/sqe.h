@@ -173,8 +173,11 @@ extern "C" {
 /** An operation to sends I3C CCC */
 #define RTIO_OP_I3C_CCC (RTIO_OP_I3C_CONFIGURE+1)
 
+/** An operation to perform I3C Dynamic Address Assignment */
+#define RTIO_OP_I3C_DAA (RTIO_OP_I3C_CCC+1)
+
 /** An operation to await a signal while blocking the iodev (if one is provided) */
-#define RTIO_OP_AWAIT (RTIO_OP_I3C_CCC+1)
+#define RTIO_OP_AWAIT (RTIO_OP_I3C_DAA+1)
 
 /**
  * @}

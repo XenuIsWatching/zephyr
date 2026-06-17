@@ -1436,15 +1436,13 @@ out_ccc_stop:
 /**
  * @brief Callback to service target initiated IBIs.
  *
- * @param work Pointer to k_work item.
+ * @param dev Pointer to controller device driver instance.
  */
-static void mcux_i3c_ibi_work(struct k_work *work)
+static void mcux_i3c_ibi_work(const struct device *dev)
 {
 	uint8_t payload[CONFIG_I3C_IBI_MAX_PAYLOAD_SIZE];
 	size_t payload_sz = 0;
 
-	struct i3c_ibi_work *i3c_ibi_work = CONTAINER_OF(work, struct i3c_ibi_work, work);
-	const struct device *dev = i3c_ibi_work->controller;
 	const struct mcux_i3c_config *config = dev->config;
 	struct mcux_i3c_data *data = dev->data;
 	I3C_Type *base = config->base;
@@ -1455,7 +1453,7 @@ static void mcux_i3c_ibi_work(struct k_work *work)
 	k_mutex_lock(&data->lock, K_FOREVER);
 
 	if (mcux_i3c_state_get(base) != I3C_MSTATUS_STATE_SLVREQ) {
-		LOG_DBG("IBI work %p running not because of IBI", work);
+		LOG_DBG("IBI work running not because of IBI");
 		LOG_DBG("MSTATUS 0x%08x MERRWARN 0x%08x",
 			base->MSTATUS, base->MERRWARN);
 		mcux_i3c_request_emit_stop(data, base, true);
@@ -1556,7 +1554,7 @@ static void mcux_i3c_ibi_work(struct k_work *work)
 	switch (ibitype) {
 	case I3C_MSTATUS_IBITYPE_IBI:
 		if (target != NULL) {
-			if (i3c_ibi_work_enqueue_target_irq(target,
+			if (i3c_ibi_submit_target_irq(target,
 							    &payload[0], payload_sz) != 0) {
 				LOG_ERR("Error enqueue IBI IRQ work");
 			}
@@ -1566,7 +1564,7 @@ static void mcux_i3c_ibi_work(struct k_work *work)
 		mcux_i3c_request_emit_stop(data, base, true);
 		break;
 	case I3C_MSTATUS_IBITYPE_HJ:
-		if (i3c_ibi_work_enqueue_hotjoin(dev) != 0) {
+		if (i3c_ibi_submit_hotjoin(dev) != 0) {
 			LOG_ERR("Error enqueue IBI HJ work");
 		}
 		break;
@@ -1820,7 +1818,7 @@ static void mcux_i3c_isr(const struct device *dev)
 		/*
 		 * Handle IBI in workqueue.
 		 */
-		err = i3c_ibi_work_enqueue_cb(dev, mcux_i3c_ibi_work);
+		err = i3c_ibi_submit_cb(dev, mcux_i3c_ibi_work);
 		if (err) {
 			LOG_ERR("Error enqueuing ibi work, err %d", err);
 			base->MINTSET = I3C_MINTSET_SLVSTART_MASK;

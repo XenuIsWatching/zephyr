@@ -490,11 +490,9 @@ static void i3c_sec_bus_reset(const struct device *dev)
 	}
 }
 
-/* call this from a workq after the interrupt from a controller */
-void i3c_sec_handoffed(struct k_work *work)
+/* called by the IBI backend after a controllership handoff interrupt */
+void i3c_sec_handoffed(const struct device *dev)
 {
-	struct i3c_ibi_work *ibi_node = CONTAINER_OF(work, struct i3c_ibi_work, work);
-	const struct device *dev = ibi_node->controller;
 	struct i3c_driver_data *data = (struct i3c_driver_data *)dev->data;
 	struct i3c_ccc_deftgts *deftgts = data->deftgts;
 	struct i3c_config_target config_target;

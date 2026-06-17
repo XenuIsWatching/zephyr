@@ -1723,17 +1723,15 @@ out_do_ccc:
 
 #ifdef CONFIG_I3C_USE_IBI
 /*
- * brief  Callback to service target initiated IBIs in workqueue.
+ * brief  Callback to service target initiated IBIs.
  *
- * param[in] work  Pointer to k_work item.
+ * param[in] dev  Pointer to controller device driver instance.
  */
-static void npcx_i3c_ibi_work(struct k_work *work)
+static void npcx_i3c_ibi_work(const struct device *dev)
 {
 	uint8_t payload[CONFIG_I3C_IBI_MAX_PAYLOAD_SIZE];
 	size_t payload_sz = 0;
 
-	struct i3c_ibi_work *i3c_ibi_work = CONTAINER_OF(work, struct i3c_ibi_work, work);
-	const struct device *dev = i3c_ibi_work->controller;
 	const struct npcx_i3c_config *config = dev->config;
 	struct npcx_i3c_data *data = dev->data;
 	struct i3c_reg *inst = config->base;
@@ -1744,7 +1742,7 @@ static void npcx_i3c_ibi_work(struct k_work *work)
 	k_sem_take(&data->ibi_lock_sem, K_FOREVER);
 
 	if (npcx_i3c_state_get(inst) != MSTATUS_STATE_TGTREQ) {
-		LOG_DBG("IBI work %p running not because of IBI", work);
+		LOG_DBG("IBI work running not because of IBI");
 		LOG_ERR("%s: IBI not in TGTREQ state, state : %#x", __func__,
 			npcx_i3c_state_get(inst));
 		LOG_ERR("%s: MSTATUS 0x%08x MERRWARN 0x%08x", __func__, inst->MSTATUS,
@@ -1812,7 +1810,7 @@ static void npcx_i3c_ibi_work(struct k_work *work)
 	case MSTATUS_IBITYPE_IBI:
 		target = i3c_dev_list_i3c_addr_find(dev, (uint8_t)ibiaddr);
 		if (target != NULL) {
-			if (i3c_ibi_work_enqueue_target_irq(target, &payload[0], payload_sz) != 0) {
+			if (i3c_ibi_submit_target_irq(target, &payload[0], payload_sz) != 0) {
 				LOG_ERR("Error enqueue IBI IRQ work");
 			}
 		} else {
@@ -1823,7 +1821,7 @@ static void npcx_i3c_ibi_work(struct k_work *work)
 		npcx_i3c_request_emit_stop(inst);
 		break;
 	case MSTATUS_IBITYPE_HJ:
-		if (i3c_ibi_work_enqueue_hotjoin(dev) != 0) {
+		if (i3c_ibi_submit_hotjoin(dev) != 0) {
 			LOG_ERR("Error enqueue IBI HJ work");
 		}
 		break;
@@ -2984,7 +2982,7 @@ static void npcx_i3c_isr(const struct device *dev)
 		inst->MSTATUS = BIT(NPCX_I3C_MSTATUS_TGTSTART);
 
 		/* Handle IBI in workqueue */
-		ret = i3c_ibi_work_enqueue_cb(dev, npcx_i3c_ibi_work);
+		ret = i3c_ibi_submit_cb(dev, npcx_i3c_ibi_work);
 		if (ret < 0) {
 			LOG_ERR("Enqueuing ibi work fail, ret %d", ret);
 			inst->MINTSET = BIT(NPCX_I3C_MINTSET_TGTSTART);

@@ -2838,9 +2838,9 @@ int i3c_device_controller_handoff(struct i3c_device_desc *target, bool requested
  * for i3c_device_desc. It will then obtain the standard I3C information
  * from the device.
  *
- * @param work pointer to the work item.
+ * @param dev pointer to the controller device driver instance.
  */
-void i3c_sec_handoffed(struct k_work *work);
+void i3c_sec_handoffed(const struct device *dev);
 #endif /* CONFIG_I3C_CONTROLLER && CONFIG_I3C_TARGET */
 #endif /* CONFIG_I3C_USE_IBI */
 

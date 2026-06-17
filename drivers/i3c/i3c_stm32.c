@@ -1843,7 +1843,7 @@ static void i3c_stm32_event_isr(void *arg)
 				target = i3c_dev_list_i3c_addr_find(dev, data->ibi_target_addr);
 
 				if (target != NULL) {
-					if (i3c_ibi_work_enqueue_target_irq(
+					if (i3c_ibi_submit_target_irq(
 						    target, (uint8_t *)&data->ibi_payload,
 						    data->ibi_payload_size) != 0) {
 						LOG_ERR("Error enqueue IBI IRQ work");
@@ -1861,7 +1861,7 @@ static void i3c_stm32_event_isr(void *arg)
 
 		LL_I3C_ClearFlag_HJ(i3c);
 
-		ret = i3c_ibi_work_enqueue_hotjoin(dev);
+		ret = i3c_ibi_submit_hotjoin(dev);
 		if (ret != 0) {
 			LOG_ERR("IBI Failed to enqueue hotjoin work");
 		}
