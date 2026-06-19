@@ -770,6 +770,7 @@ static int i3c_stm32_configure(const struct device *dev, enum i3c_config_type ty
 		return -ENOTSUP;
 	}
 
+#ifdef CONFIG_I3C_CONTROLLER
 	struct i3c_stm32_data *data = dev->data;
 
 	if (type == I3C_CONFIG_CONTROLLER) {
@@ -781,9 +782,10 @@ static int i3c_stm32_configure(const struct device *dev, enum i3c_config_type ty
 		data->drv_data.ctrl_config.scl.i3c = ctrl_cfg->scl.i3c;
 		data->drv_data.ctrl_config.scl.i2c = ctrl_cfg->scl.i2c;
 	}
+#endif /*CONFIG_I3C_CONTROLLER*/
 
-	ret = i3c_stm32_activate(dev);
-	if (ret != 0) {
+	ret = pm_device_runtime_get(dev);
+	if (ret < 0) {
 		LOG_ERR("Clock and GPIO could not be initialized for the I3C module, err=%d", ret);
 		return ret;
 	}
@@ -792,8 +794,8 @@ static int i3c_stm32_configure(const struct device *dev, enum i3c_config_type ty
 	if (type == I3C_CONFIG_CONTROLLER) {
 		ret = i3c_stm32_config_clk_wave(dev);
 		if (ret != 0) {
-			LOG_ERR("TimigReg0 timing could not be calculated, err=%d", ret);
-			return ret;
+			LOG_ERR("TimingReg0 timing could not be calculated, err=%d", ret);
+			goto cleanup;
 		}
 	}
 #endif /*CONFIG_I3C_CONTROLLER*/
@@ -801,7 +803,7 @@ static int i3c_stm32_configure(const struct device *dev, enum i3c_config_type ty
 	ret = i3c_stm32_config_ctrl_bus_char(dev, type);
 	if (ret != 0) {
 		LOG_ERR("TimingReg1 timing could not be calculated, err=%d", ret);
-		return ret;
+		goto cleanup;
 	}
 
 #ifdef CONFIG_I3C_TARGET
@@ -819,7 +821,9 @@ static int i3c_stm32_configure(const struct device *dev, enum i3c_config_type ty
 	}
 #endif
 
-	return 0;
+cleanup:
+	(void)pm_device_runtime_put(dev);
+	return ret;
 }
 
 #ifdef CONFIG_I3C_CONTROLLER
@@ -1645,7 +1649,7 @@ static void i3c_stm32_target_init(const struct device *dev, uint8_t mipi_instanc
 	/* Enable I3C block */
 	LL_I3C_Enable(i3c);
 
-	/* Disable Interrupts */
+	/* Enable Interrupts */
 	LL_I3C_EnableIT_DAUPD(i3c);
 	LL_I3C_EnableIT_FC(i3c);
 	LL_I3C_EnableIT_RXFNE(i3c);
@@ -1670,22 +1674,17 @@ static int i3c_stm32_init(const struct device *dev)
 	config->irq_config_func(dev);
 
 #ifdef CONFIG_I3C_TARGET
-	if (config->target_mode) {
-		struct i3c_config_target targ_cfg = {
-			.pid = (uint64_t)config->mipi_instance << 12U,
-			.dcr = config->dcr,
-			.max_read_len = config->mrl,
-			.max_write_len = config->mwl,
-		};
+	struct i3c_config_target targ_cfg = {
+		.pid = (uint64_t)config->mipi_instance << 12U,
+		.dcr = config->dcr,
+		.max_read_len = config->mrl,
+		.max_write_len = config->mwl,
+	};
 
-		ret = i3c_stm32_configure(dev, I3C_CONFIG_TARGET, &targ_cfg);
-		if (ret != 0) {
-			LOG_ERR("Failed to configure I3C target mode, err=%d", ret);
-			return ret;
-		}
-
-		i3c_stm32_target_init(dev, config->mipi_instance);
-		return 0;
+	ret = i3c_stm32_configure(dev, I3C_CONFIG_TARGET, &targ_cfg);
+	if (ret != 0) {
+		LOG_ERR("Failed to configure I3C target mode, err=%d", ret);
+		return ret;
 	}
 #endif
 
@@ -1712,7 +1711,22 @@ static int i3c_stm32_init(const struct device *dev)
 		return ret;
 	}
 
-	i3c_stm32_configure(dev, I3C_CONFIG_CONTROLLER, &data->drv_data.ctrl_config);
+	ret = i3c_stm32_configure(dev, I3C_CONFIG_CONTROLLER, &data->drv_data.ctrl_config);
+	if (ret != 0) {
+		LOG_ERR("Failed to configure I3C controller mode, err=%d", ret);
+		return ret;
+	}
+#endif /*CONFIG_I3C_CONTROLLER*/
+
+	/* Start the device in the role selected by the target_mode DT property. */
+#ifdef CONFIG_I3C_TARGET
+	if (config->target_mode) {
+		i3c_stm32_target_init(dev, config->mipi_instance);
+		return 0;
+	}
+#endif
+
+#ifdef CONFIG_I3C_CONTROLLER
 	i3c_stm32_controller_init(dev);
 
 	/* Perform bus initialization only if there are devices that already exist on the bus */
@@ -1735,11 +1749,9 @@ static int i3c_stm32_init(const struct device *dev)
 		pm_policy_state_lock_get(PM_STATE_SUSPEND_TO_IDLE, PM_ALL_SUBSTATES);
 	}
 #endif
-
-	return 0;
-#else  /*CONFIG_I3C_CONTROLLER*/
-	return -ENOTSUP;
 #endif /*CONFIG_I3C_CONTROLLER*/
+	return 0;
+
 }
 
 #ifdef CONFIG_I3C_TARGET
@@ -1768,7 +1780,7 @@ static void i3c_stm32_process_target_txfnf(const struct device *dev)
 		}
 	}
 }
-#endif /*CONFIG_I3C_CONTROLLER*/
+#endif /*CONFIG_I3C_TARGET*/
 
 static void i3c_stm32_event_isr_tx(const struct device *dev)
 {
@@ -2165,10 +2177,14 @@ static int i3c_stm32_error(void *arg)
 
 	data->msg_state = STM32_I3C_MSG_ERR;
 
-	k_sem_give(&data->device_sync_sem);
+#ifdef CONFIG_I3C_CONTROLLER
+	if (ll_i3c_is_in_controller_mode(i3c)) {
+		k_sem_give(&data->device_sync_sem);
 
-	(void)pm_device_runtime_put(dev);
-	pm_policy_state_lock_put(PM_STATE_SUSPEND_TO_IDLE, PM_ALL_SUBSTATES);
+		(void)pm_device_runtime_put(dev);
+		pm_policy_state_lock_put(PM_STATE_SUSPEND_TO_IDLE, PM_ALL_SUBSTATES);
+	}
+#endif /*CONFIG_I3C_CONTROLLER*/
 
 	return 1;
 }
