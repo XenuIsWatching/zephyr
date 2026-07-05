@@ -117,7 +117,6 @@ static int adxl355_decode_stream(const uint8_t *buffer, struct sensor_chan_spec 
 
 	memset(data, 0, sizeof(struct sensor_three_axis_sample_data));
 	data->header.base_timestamp_ns = enc_data->timestamp;
-	data->header.reading_count = 1;
 	data->shift = 11;
 
 	buffer += sizeof(struct adxl355_fifo_data);
@@ -181,6 +180,7 @@ static int adxl355_decode_stream(const uint8_t *buffer, struct sensor_chan_spec 
 		buffer = sample_end;
 		*fit = (uintptr_t)sample_end;
 	}
+	data->header.reading_count = count;
 	return count;
 }
 #endif /* CONFIG_ADXL355_STREAM */
