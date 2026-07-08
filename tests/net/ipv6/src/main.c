@@ -947,12 +947,11 @@ ZTEST(net_ipv6, test_send_neighbor_discovery)
 	zassert_equal(pkt_num, 4, "Unexpected number of packets sent (%d)", pkt_num);
 
 	/* If there are anything pending by the NS reply timer, then
-	 * then 1 is returned and we can update the buffer and packet
-	 * counts.
+	 * 1 is returned. A pending timer does not imply that a TX packet or
+	 * buffer is still allocated at this point.
 	 */
 	ret = net_ipv6_nbr_test_cancel();
-	avail_pkt_count -= ret;
-	avail_buf_count -= ret;
+	ARG_UNUSED(ret);
 
 	zassert_equal(k_mem_slab_num_free_get(tx), avail_pkt_count,
 		      "Unexpected tx packet pool free count (%d vs %d)",
@@ -2428,6 +2427,11 @@ ZTEST(net_ipv6, test_mld_clears_joined_state_on_iface_down)
 ZTEST(net_ipv6, test_nd_reachability_hint)
 {
 	struct net_nbr *nbr;
+
+	/* Ensure the neighbor exists rather than relying on it surviving from
+	 * an earlier test: interface carrier toggles clear the neighbor cache.
+	 */
+	add_neighbor();
 
 	nbr = net_ipv6_nbr_lookup(TEST_NET_IF, &peer_addr);
 	zassert_not_null(nbr, "Neighbor %s not found in cache\n",

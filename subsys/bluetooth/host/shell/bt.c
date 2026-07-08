@@ -2934,6 +2934,28 @@ static int cmd_per_adv_data(const struct shell *sh, size_t argc,
 
 	return 0;
 }
+
+static int cmd_per_adv_update_did(const struct shell *sh, size_t argc, char *argv[])
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	const struct bt_le_ext_adv *adv = adv_sets[selected_adv];
+	int err;
+
+	if (adv == NULL) {
+		shell_error(sh, "No extended advertisement set selected");
+		return -EINVAL;
+	}
+
+	err = bt_le_per_adv_update_did(adv);
+	if (err != 0) {
+		shell_error(sh, "Failed to update periodic advertising DID (%d)", err);
+		return -ENOEXEC;
+	}
+
+	return 0;
+}
 #endif /* CONFIG_BT_PER_ADV */
 #endif /* CONFIG_BT_EXT_ADV */
 #endif /* CONFIG_BT_BROADCASTER */
@@ -3043,7 +3065,7 @@ static int cmd_per_adv_sync_select(const struct shell *sh, size_t argc, char *ar
 			return -ENOEXEC;
 		}
 
-		if (id > ARRAY_SIZE(adv_sets)) {
+		if (id >= ARRAY_SIZE(per_adv_syncs)) {
 			shell_error(sh, "Invalid id: %lu", id);
 			return -EINVAL;
 		}
@@ -3052,9 +3074,9 @@ static int cmd_per_adv_sync_select(const struct shell *sh, size_t argc, char *ar
 		return 0;
 	}
 
-	for (size_t i = 0U; i < ARRAY_SIZE(adv_sets); i++) {
-		if (adv_sets[i]) {
-			shell_print(sh, "PER_ADV_SYNC[%zu] %p", i, adv_sets[i]);
+	for (size_t i = 0U; i < ARRAY_SIZE(per_adv_syncs); i++) {
+		if (per_adv_syncs[i]) {
+			shell_print(sh, "PER_ADV_SYNC[%zu] %p", i, per_adv_syncs[i]);
 		}
 	}
 
@@ -3169,18 +3191,24 @@ static int cmd_per_adv_sync_transfer(const struct shell *sh, size_t argc,
 				     char *argv[])
 {
 	int err;
-	int index;
+	unsigned long index;
 	struct bt_le_per_adv_sync *per_adv_sync;
 
 	if (argc > 1) {
-		index = strtol(argv[1], NULL, 10);
+		err = 0;
+		index = shell_strtoul(argv[1], 0, &err);
+		if (err != 0) {
+			shell_error(sh, "Could not parse index: %d", err);
+			return -ENOEXEC;
+		}
 	} else {
-		index = 0;
+		index = 0U;
 	}
 
 	if (index >= ARRAY_SIZE(per_adv_syncs)) {
-		shell_error(sh, "Maximum index is %zu but %d was requested",
+		shell_error(sh, "Maximum index is %zu but %lu was requested",
 			    ARRAY_SIZE(per_adv_syncs) - 1, index);
+		return -EINVAL;
 	}
 
 	per_adv_sync = per_adv_syncs[index];
@@ -5413,6 +5441,8 @@ SHELL_STATIC_SUBCMD_SET_CREATE(bt_cmds,
 		      "[<interval-min> [<interval-max> [tx_power]]]",
 		      cmd_per_adv_param, 1, 3),
 	SHELL_CMD_ARG(per-adv-data, NULL, "[data]", cmd_per_adv_data, 1, 1),
+	SHELL_CMD_ARG(per-adv-update-did, NULL, "Update periodic advertising DID",
+		     cmd_per_adv_update_did, 1, 0),
 #endif /* CONFIG_BT_PER_ADV */
 #endif /* CONFIG_BT_EXT_ADV */
 #endif /* CONFIG_BT_BROADCASTER */
@@ -5423,7 +5453,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(bt_cmds,
 		      cmd_per_adv_sync_create, 4, 6),
 	SHELL_CMD_ARG(per-adv-sync-delete, NULL, "[<index>]",
 		      cmd_per_adv_sync_delete, 1, 1),
-	SHELL_CMD_ARG(per-adv-sync-select, NULL, "[adv]", cmd_per_adv_sync_select, 1, 1),
+	SHELL_CMD_ARG(per-adv-sync-select, NULL, "[sync]", cmd_per_adv_sync_select, 1, 1),
 #endif /* defined(CONFIG_BT_PER_ADV_SYNC) */
 #if defined(CONFIG_BT_EAD)
 	SHELL_CMD(encrypted-ad, &bt_encrypted_ad_cmds, "Manage advertiser with encrypted data",

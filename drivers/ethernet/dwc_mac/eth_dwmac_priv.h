@@ -18,6 +18,54 @@
 #include <zephyr/sys/device_mmio.h>
 
 /*
+ * Common checks
+ */
+
+/*
+ * If a data cache is enabled, cache line size must be configured to a non-zero
+ * value for this driver to work correctly.
+ */
+#if CONFIG_DCACHE
+#if (CONFIG_DCACHE_LINE_SIZE+0 == 0)
+#error "CONFIG_DCACHE_LINE_SIZE must be configured to a non-zero value"
+#endif
+#endif
+
+/*
+ * The DMA imposes certain constraints on the buffers:
+ * 1. The DMA can only perform accesses with the data bus width. Even though buffers can start on
+ *    any address, other data in the first and last words of the buffer may be corrupted. To
+ *    avoid this, we require buffers to be aligned to the data bus width and their size to be a
+ *    multiple of the data bus width.
+ * 2. If a data cache is enabled, buffers must also be aligned to the cache line size and their
+ *    size must be a multiple of the cache line size. This is because for cache management, cache
+ *    lines are invalidated, so if a buffer is not aligned to cache line size, the first and last
+ *    cache line of the buffer may contain other data, which can be corrupted when invalidated.
+ */
+#define DWMAC_ASSERT_BUFFER_ALIGNMENT(bus_width)                                                   \
+	BUILD_ASSERT(                                                                              \
+		((CONFIG_NET_BUF_DATA_SIZE) % MAX(                                                 \
+			((bus_width) / 8),                                                         \
+			COND_CODE_1(CONFIG_DCACHE, (CONFIG_DCACHE_LINE_SIZE), (0))                 \
+		)) == 0, "CONFIG_NET_BUF_DATA_SIZE must be a multiple of the data bus width or "   \
+			 "cache line size"                                                         \
+	);                                                                                         \
+	BUILD_ASSERT(                                                                              \
+		COND_CODE_0(CONFIG_NET_BUF_ALIGNMENT, (sizeof(void *)), (CONFIG_NET_BUF_ALIGNMENT))\
+		>= MAX(                                                                            \
+			((bus_width) / 8),                                                         \
+			COND_CODE_1(CONFIG_DCACHE, (CONFIG_DCACHE_LINE_SIZE), (0))                 \
+		), "CONFIG_NET_BUF_ALIGNMENT must be at least the data bus width or cache line"    \
+		   "size"                                                                          \
+	);                                                                                         \
+	IF_ENABLED(CONFIG_DCACHE, (                                                                \
+		BUILD_ASSERT(                                                                      \
+			(CONFIG_NET_BUF_ALIGNMENT) % (CONFIG_DCACHE_LINE_SIZE) == 0,               \
+			"CONFIG_NET_BUF_ALIGNMENT must be a multiple of the data cache line size"  \
+		)                                                                                  \
+	));
+
+/*
  * Global driver parameters
  */
 
@@ -38,9 +86,11 @@ struct dwmac_dma_desc {
 	uint32_t des1;
 	uint32_t des2;
 	uint32_t des3;
-#ifndef CONFIG_ETH_DWC_ETHER_QOS_CORE
-	/* software-only field for tracking the net_buf associated with this desc */
-	struct net_buf *frag;
+#ifdef CONFIG_ETH_DWC_ETHER_1000_CORE_EDFE
+	uint32_t des4;
+	uint32_t des5;
+	uint32_t des6;
+	uint32_t des7;
 #endif
 };
 
@@ -58,11 +108,15 @@ struct dwmac_priv {
 
 	uint8_t mac_addr[6];
 
-#ifdef CONFIG_ETH_DWC_ETHER_QOS_CORE
 	uint32_t feature0;
+#ifdef CONFIG_ETH_DWC_ETHER_QOS_CORE
 	uint32_t feature1;
 	uint32_t feature2;
 	uint32_t feature3;
+#endif
+
+#if defined(CONFIG_NET_STATISTICS_ETHERNET)
+	struct net_stats_eth stats;
 #endif
 
 	struct dwmac_dma_desc *tx_descs, *rx_descs;
@@ -73,13 +127,12 @@ struct dwmac_priv {
 #ifdef CONFIG_MMU
 	uintptr_t tx_descs_phys, rx_descs_phys;
 #endif
-#ifdef CONFIG_ETH_DWC_ETHER_QOS_CORE
+
 	struct net_buf *tx_frags[NB_TX_DESCS]; /* index shared with tx_descs */
 	struct net_buf *rx_frags[NB_RX_DESCS]; /* index shared with rx_descs */
 
 	struct net_pkt *rx_pkt;
-	unsigned int rx_bytes;
-#endif
+	uint16_t rx_bytes;
 
 	K_KERNEL_STACK_MEMBER(rx_refill_thread_stack, RX_REFILL_STACK_SIZE);
 	struct k_thread rx_refill_thread;
@@ -1227,6 +1280,7 @@ extern const struct ethernet_api dwmac_api;
 /* GMAC register map */
 #define DWMAC_MACCR      0x0000
 #define DWMAC_MACFFR     0x0004
+#define DWMAC_MACVERR    0x0020
 #define DWMAC_MACA0HR    0x0040
 #define DWMAC_MACA0LR    0x0044
 
@@ -1238,10 +1292,12 @@ extern const struct ethernet_api dwmac_api;
 #define DWMAC_DMASR        0x1014
 #define DWMAC_DMAOMR       0x1018
 #define DWMAC_DMAIER       0x101C
+#define DWMAC_HWFR         0x1058
 
 /* MAC control bits */
 #define DWMAC_MACCR_RE     BIT(2)
 #define DWMAC_MACCR_TE     BIT(3)
+#define DWMAC_MACCR_IPCO   BIT(10)
 #define DWMAC_MACCR_DM     BIT(11)
 #define DWMAC_MACCR_FES    BIT(14)
 #define DWMAC_MACCR_PS     BIT(15)
@@ -1266,6 +1322,7 @@ extern const struct ethernet_api dwmac_api;
 
 /* DMA bus mode bits */
 #define DWMAC_DMABMR_SR    BIT(0)
+#define DWMAC_DMABMR_EDFE  BIT(7)
 
 /* DMA interrupt enable bits */
 #define DWMAC_DMAIER_TIE   BIT(0)
@@ -1274,6 +1331,25 @@ extern const struct ethernet_api dwmac_api;
 #define DWMAC_DMAIER_RBUIE BIT(7)
 #define DWMAC_DMAIER_AISE  BIT(15)
 #define DWMAC_DMAIER_NISE  BIT(16)
+
+/* Hardware Feature Register */
+#define DWMAC_HWFR_10_100  BIT(0)
+#define DWMAC_HWFR_1000    BIT(1)
+#define DWMAC_HWFR_HD      BIT(2)
+#define DWMAC_HWFR_HASHF   BIT(4)
+#define DWMAC_HWFR_ADDMAC  BIT(5)
+#define DWMAC_HWFR_PCS     BIT(6)
+#define DWMAC_HWFR_SMA     BIT(8)
+#define DWMAC_HWFR_PMTW    BIT(9)
+#define DWMAC_HWFR_PMTM    BIT(10)
+#define DWMAC_HWFR_RMON    BIT(11)
+#define DWMAC_HWFR_TS2002  BIT(12)
+#define DWMAC_HWFR_TS2008  BIT(13)
+#define DWMAC_HWFR_TX_CHK  BIT(16)
+#define DWMAC_HWFR_RXCHKV1 BIT(17)
+#define DWMAC_HWFR_RXCHKV2 BIT(18)
+#define DWMAC_HWFR_FIFO2K  BIT(19)
+#define DWMAC_HWFR_ALTDESC BIT(24)
 
 /* DWMAC v3.x MDIO registers (GMAC core) */
 #define MAC_MDIO_ADDRESS 0x0010
@@ -1287,8 +1363,6 @@ extern const struct ethernet_api dwmac_api;
 
 #define MAC_MDIO_DATA_RA GENMASK(31, 16)
 #define MAC_MDIO_DATA_GD GENMASK(15, 0)
-
-#define MAC_VERSION 0x0020
 
 #endif /* CONFIG_ETH_DWC_ETHER_1000_CORE */
 

@@ -287,17 +287,10 @@ static enum net_verdict ethernet_recv(struct net_if *iface,
 				  sizeof(struct net_eth_addr), NET_LINK_ETHERNET);
 
 	if (IS_ENABLED(CONFIG_NET_ETHERNET_BRIDGE) && net_eth_iface_is_bridged(ctx)) {
-		verdict = eth_bridge_input_process(iface, pkt);
+		verdict = eth_bridge_input_process(iface, pkt, &iface);
 		if (verdict == NET_DROP) {
 			goto drop;
 		}
-
-		/* Handled by bridge locally */
-		if (verdict == NET_OK) {
-			iface = net_eth_get_bridge(ctx);
-		}
-
-		/* For NET_CONTINUE case, current iface continues to handle the pkt. */
 	}
 
 	type = net_ntohs(hdr->type);
@@ -512,11 +505,14 @@ static int ethernet_ll_prepare_on_ipv4(struct net_if *iface,
 	}
 
 	if (IS_ENABLED(CONFIG_NET_ARP)) {
-		return net_arp_prepare(pkt,
-				       request_ip != NULL ?
-				       (struct net_in_addr *)request_ip :
-				       (struct net_in_addr *)NET_IPV4_HDR(pkt)->dst,
-				       NULL, out);
+		struct net_in_addr addr;
+
+		if (request_ip == NULL) {
+			net_ipv4_addr_copy_raw((uint8_t *)&addr, NET_IPV4_HDR(pkt)->dst);
+			request_ip = &addr;
+		}
+
+		return net_arp_prepare(pkt, (struct net_in_addr *)request_ip, NULL, out);
 	}
 
 	return NET_ARP_COMPLETE;
@@ -553,10 +549,19 @@ static inline size_t get_reserve_ll_header_size(struct net_if *iface)
 	bool is_vlan = false;
 
 #if defined(CONFIG_NET_VLAN)
+#if CONFIG_NET_VLAN_COUNT > 0
 	if (net_if_l2(iface) == &NET_L2_GET_NAME(VIRTUAL)) {
 		iface = net_eth_get_vlan_main(iface);
 		is_vlan = true;
 	}
+#else
+	/* When CONFIG_NET_VLAN_COUNT = 0, priority-tagged
+	 * frames are supported on the main Ethernet interface.
+	 */
+	if (net_if_l2(iface) == &NET_L2_GET_NAME(ETHERNET)) {
+		is_vlan = true;
+	}
+#endif
 #endif
 
 	if (net_if_l2(iface) != &NET_L2_GET_NAME(ETHERNET)) {
@@ -581,7 +586,6 @@ static struct net_buf *ethernet_fill_header(struct ethernet_context *ctx,
 {
 	struct net_if *orig_iface = iface;
 	struct net_buf *hdr_frag;
-	struct net_eth_hdr *hdr;
 	size_t reserve_ll_header;
 	size_t hdr_len;
 	bool is_vlan;
@@ -597,11 +601,6 @@ static struct net_buf *ethernet_fill_header(struct ethernet_context *ctx,
 	if (reserve_ll_header > 0) {
 		hdr_len = reserve_ll_header;
 		hdr_frag = pkt->buffer;
-
-		NET_DBG("Making room for link header %zd bytes", hdr_len);
-
-		/* Make room for the header */
-		net_buf_push(pkt->buffer, hdr_len);
 	} else {
 		hdr_len = IS_ENABLED(CONFIG_NET_VLAN) ?
 			sizeof(struct net_eth_vlan_hdr) :
@@ -616,9 +615,14 @@ static struct net_buf *ethernet_fill_header(struct ethernet_context *ctx,
 	if (is_vlan) {
 		struct net_eth_vlan_hdr *hdr_vlan;
 
+		NET_ASSERT(hdr_len >= sizeof(struct net_eth_vlan_hdr));
+		hdr_len = sizeof(struct net_eth_vlan_hdr);
+
 		if (reserve_ll_header == 0U) {
-			hdr_len = sizeof(struct net_eth_vlan_hdr);
 			net_buf_add(hdr_frag, hdr_len);
+		} else {
+			/* Make room for the header */
+			net_buf_push(pkt->buffer, hdr_len);
 		}
 
 		hdr_vlan = (struct net_eth_vlan_hdr *)(hdr_frag->data);
@@ -642,12 +646,19 @@ static struct net_buf *ethernet_fill_header(struct ethernet_context *ctx,
 				    hdr_len,
 				    &hdr_vlan->src, &hdr_vlan->dst, false);
 	} else {
-		hdr = (struct net_eth_hdr *)(hdr_frag->data);
+		struct net_eth_hdr *hdr;
+
+		NET_ASSERT(hdr_len >= sizeof(struct net_eth_hdr));
+		hdr_len = sizeof(struct net_eth_hdr);
 
 		if (reserve_ll_header == 0U) {
-			hdr_len = sizeof(struct net_eth_hdr);
 			net_buf_add(hdr_frag, hdr_len);
+		} else {
+			/* Make room for the header */
+			net_buf_push(pkt->buffer, hdr_len);
 		}
+
+		hdr = (struct net_eth_hdr *)(hdr_frag->data);
 
 		if (ptype == net_htons(NET_ETH_PTYPE_ARP) ||
 		    (!ethernet_fill_in_dst_on_ipv4_mcast(pkt, &hdr->dst) &&
@@ -816,7 +827,6 @@ static inline int ethernet_enable(struct net_if *iface, bool state)
 {
 	const struct device *dev = net_if_get_device(iface);
 	const struct ethernet_api *eth = dev->api;
-	struct net_linkaddr *mac_addr;
 
 	NET_ASSERT(eth != NULL);
 
@@ -826,20 +836,10 @@ static inline int ethernet_enable(struct net_if *iface, bool state)
 		if (eth->stop) {
 			return eth->stop(dev, iface);
 		}
-
-		return 0;
-	}
-
-	mac_addr = net_if_get_link_addr(iface);
-
-	if ((mac_addr->len != NET_ETH_ADDR_LEN) ||
-	    !net_eth_is_addr_valid((struct net_eth_addr *)mac_addr->addr)) {
-		NET_ERR("Invalid MAC address for iface %d (%p)", net_if_get_by_iface(iface), iface);
-		return -EINVAL;
-	}
-
-	if (eth->start) {
-		return eth->start(dev, iface);
+	} else {
+		if (eth->start) {
+			return eth->start(dev, iface);
+		}
 	}
 
 	return 0;
@@ -903,20 +903,11 @@ static void carrier_on_off(struct k_work *work)
 	}
 }
 
-void net_eth_carrier_on(struct net_if *iface)
+void net_eth_carrier_set(struct net_if *iface, bool carrier_up)
 {
 	struct ethernet_context *ctx = net_if_l2_data(iface);
 
-	if (!atomic_test_and_set_bit(&ctx->flags, ETH_CARRIER_UP)) {
-		k_work_submit(&ctx->carrier_work);
-	}
-}
-
-void net_eth_carrier_off(struct net_if *iface)
-{
-	struct ethernet_context *ctx = net_if_l2_data(iface);
-
-	if (atomic_test_and_clear_bit(&ctx->flags, ETH_CARRIER_UP)) {
+	if (atomic_test_and_set_bit_to(&ctx->flags, ETH_CARRIER_UP, carrier_up)) {
 		k_work_submit(&ctx->carrier_work);
 	}
 }
@@ -997,10 +988,6 @@ int net_eth_promisc_mode(struct net_if *iface, bool enable)
 {
 	struct ethernet_req_params params;
 
-	if (!(net_eth_get_hw_capabilities(iface) & ETHERNET_PROMISC_MODE)) {
-		return -ENOTSUP;
-	}
-
 	params.promisc_mode = enable;
 
 	return net_mgmt(NET_REQUEST_ETHERNET_SET_PROMISC_MODE, iface,
@@ -1012,10 +999,6 @@ int net_eth_txinjection_mode(struct net_if *iface, bool enable)
 {
 #ifdef CONFIG_NET_L2_ETHERNET_MGMT
 	struct ethernet_req_params params;
-
-	if (!(net_eth_get_hw_capabilities(iface) & ETHERNET_TXINJECTION_MODE)) {
-		return -ENOTSUP;
-	}
 
 	params.txinjection_mode = enable;
 
@@ -1034,10 +1017,6 @@ int net_eth_mac_filter(struct net_if *iface, struct net_eth_addr *mac,
 {
 #ifdef CONFIG_NET_L2_ETHERNET_MGMT
 	struct ethernet_req_params params;
-
-	if (!(net_eth_get_hw_capabilities(iface) & ETHERNET_HW_FILTERING)) {
-		return -ENOTSUP;
-	}
 
 	memcpy(&params.filter.mac_address, mac, sizeof(struct net_eth_addr));
 	params.filter.type = type;

@@ -26,6 +26,9 @@ Common
 Build System
 ************
 
+* :kconfig:option:`CONFIG_LEGACY_GENERATED_INCLUDE_PATH` has been deprecated, and disabled by
+  default, includes must now be prefixed with ``zephyr/`` for zephyr files.
+
 Kernel
 ******
 
@@ -111,6 +114,9 @@ Boards
   to set :kconfig:option:`CONFIG_TFM_MCUBOOT_SIGNATURE_TYPE` to ``"RSA-3072"``.
   Otherwise, make sure to have your own signing keys of the signature type in use.
 
+* All Kconfigs under modules/hal_silabs/gecko were renamed from ``SOC_GECKO_*``
+  to ``SILABS_GECKO_*``. Adapt your board accordingly.
+
 Device Drivers and Devicetree
 *****************************
 
@@ -140,6 +146,11 @@ ADC
 * The ``girqs`` and ``pcrs`` properties (array type) of :dtcompatible:`microchip,xec-adc` have been
   replaced by encoded ``girqs`` (using ``MCHP_XEC_ECIA_GIRQ_ENC`` macros) and ``pcr-scr`` (int type)
   for encoded PCR register index and bit position (:github:`105658`).
+
+* The :kconfig:option:`CONFIG_LPADC_DO_OFFSET_CALIBRATION` option is now only meaningful when
+  :kconfig:option:`CONFIG_ADC_MCUX_LPADC` is enabled, and its ``default y`` is now scoped to that
+  condition. In-tree boards no longer enable it explicitly in their defconfigs since
+  the default already covers them.
 
 Audio Codec
 ===========
@@ -206,6 +217,9 @@ Display
   :c:enumerator:`PIXEL_FORMAT_BGR_888`, for which the LVGL glue performs the red/blue channel swap
   automatically.
 
+* The Kconfig options ``CONFIG_ST730X_POWERMODE_LOW`` for ST7305 and ST7306 displays has been
+  removed in favour of toggling the low-power-mode property on the device node.
+
 DMA
 ===
 
@@ -225,6 +239,39 @@ ESPI
   This replaces the current all-or-nothing approach, which is tightly coupled to
   CONFIG_ESPI_PERIPHERAL_CUSTOM_OPCODE and single eSPI ACPI HW block instance in all eSPI drivers.
   This will be completely removed in the next Zephyr release to give time for transition.
+
+* The Microchip XEC eSPI v2 driver (:dtcompatible:`microchip,xec-espi-v2`) has been ported from
+  MEC172x to also support MEC174x, MEC175x, and MEC165xB. This required several devicetree
+  changes that affect out-of-tree boards using this binding (:github:`109519`):
+
+  * The ``pcrs`` property has been replaced by ``pcr-scr``, which is now a single integer
+    encoded with the ``MCHP_XEC_SCR_ENCODE(reg, bit)`` helper macro instead of a
+    ``<reg bit>`` cell pair. Update existing overlays from ``pcrs = <2 19>;`` to
+    ``pcr-scr = <MCHP_XEC_SCR_ENCODE(2, 19)>;``.
+
+  * On MEC174x/5x/165xB only, ``girqs`` cells are now a single integer per entry produced
+    by ``MCHP_XEC_ECIA_GIRQ_ENC(reg, bit)`` rather than a ``<reg bit>`` pair. MEC172x
+    continues to use the existing ``MCHP_XEC_ECIA(...)`` form.
+
+  * Two new optional properties are available on the eSPI controller node for hosts whose
+    address space exceeds 32 bits: ``host-memmap-addr-high`` (host address bits [47:32] for
+    memory-mapped logical devices) and ``sram-bar-addr-high`` (host address bits [47:32] for
+    both SRAM BARs).
+
+  * The ``interrupt-names`` of the eSPI controller and its host-device children have been
+    renamed for consistency. Update overlays accordingly:
+
+    * Controller: ``rst`` → ``erst``; ``vwct_0_6`` / ``vwct_7_10`` →
+      ``ht_vw_bank0`` / ``ht_vw_bank1``. Two corresponding interrupts
+      (``ht_vw_bank0`` / ``ht_vw_bank1``) must be added to the ``interrupts`` array.
+    * KBC child: ``kbc_obe`` / ``kbc_ibf`` → ``obe`` / ``ibf``.
+    * ACPI EC children: ``acpi_ibf`` / ``acpi_obe`` → ``ibf`` / ``obe``.
+
+  * In the MEC5 SoC DTSI (MEC174x/5x/165xB), every host-device child of the eSPI
+    controller (mailbox, KBC, ACPI EC, ACPI PM1, port92, glue, EMI, BIOS debug port, etc.)
+    now declares the ``ldn`` (logical device number) property required by
+    :dtcompatible:`microchip,xec-espi-host-dev`. Out-of-tree boards that override or add
+    host-device child nodes for these SoCs must set ``ldn`` on each.
 
 Ethernet
 ========
@@ -267,6 +314,15 @@ Ethernet
   error will be logged. This check is done before the ``start`` function of the
   :c:struct:`ethernet_api` is called. This also applies to native wifi drivers. (:github:`110435`)
 
+* The Xilinx GEM Ethernet driver (:dtcompatible:`xlnx,gem`) has been switched over to use the
+  current MDIO and PHY facilities, splitting up the driver's implementation into separate
+  MDIO and Ethernet MAC drivers. The driver's custom PHY management code has been removed.
+  The types of Ethernet PHYs supported by the removed custom code, the Marvell Alaska GBit
+  PHY family and the TI TLK105/DP83822 100 MBit PHYs are both covered by the standard
+  (:dtcompatible:`ethernet-phy`) driver. The QEMU targets which emulate the Xilinx GEM have
+  been updated accordingly, as have been the device trees of the Zynq-7000 and ZynqMP /
+  UltraScale+ SoC families. (:github:`87313`)
+
 Flash
 =====
 * :dtcompatible:`jedec,spi-nand` now requires a ``plane-bytes`` property, which indicates the size
@@ -281,6 +337,14 @@ Fuel Gauge
   should migrate to the unit-suffixed names. For example,
   ``FUEL_GAUGE_CURRENT`` (``val.current``) is replaced by
   ``FUEL_GAUGE_CURRENT_UA`` (``val.current_ua``).
+
+* Drivers had inconsistently been reporting full charge/discharge cycles or
+  "1/100ths" of a cycle in the ``FUEL_GAUGE_CYCLE_COUNT`` property.
+  The property now consistently reports full cycles, and drivers that
+  previously reported fractions of a cycle (i.e. ADP5360 and BQ27Z746) have
+  been updated to report full cycles instead.
+  Applications that relied on the old behavior should be updated.
+  (:github:`112276`)
 
 GPIO
 ====
@@ -353,6 +417,9 @@ Interrupt Controllers
   ``DT_INST_IRQ(n, sense)`` or ``DT_IRQ(node, sense)`` should be updated to use ``flags`` instead
   of ``sense``.
 
+* Deprecate ``GIC_NUM_CPU_IF`` from GIC header file :file:`gic.h`. One shall use
+  instead.:kconfig:option:`CONFIG_MP_MAX_NUM_CPUS` instead.
+
 NXP
 ===
 
@@ -375,6 +442,23 @@ PWM
 
 * STM32 PWM DT bindings macro ``PWM_STM32_COMPLEMENTARY`` that is deprecated since
   Zephyr v3.3.0 is no more defined. One shall use ``STM32_PWM_COMPLEMENTARY`` instead.
+
+RTC
+===
+
+* The legacy counter-based DS3231 driver has been removed, completing the deprecation introduced in
+  :github:`95221`. Applications using :dtcompatible:`maxim,ds3231`, ``CONFIG_COUNTER_MAXIM_DS3231``,
+  or :file:`<zephyr/drivers/rtc/maxim_ds3231.h>` must migrate to the RTC subsystem driver.
+
+  Replace the single legacy I2C node with a :dtcompatible:`maxim,ds3231-mfd` parent and a
+  :dtcompatible:`maxim,ds3231-rtc` child. Move ``isw-gpios`` to the RTC child, rename old
+  ``32k-gpios`` usage to ``freq-32khz-gpios``, and replace ``maxim_ds3231_*`` helper API usage with
+  generic RTC subsystem APIs.
+
+* :dtcompatible:`microcrystal,rv3032` properties ``trickle-resistor-ohms`` and
+  ``trickle-charger-mode`` have moved to the parent
+  :dtcompatible:`microcrystal,rv3032-mfd` device. The parent MFD device now
+  handles configuring the backup supply mode for all child devices.
 
 SD Host Controller
 ==================
@@ -413,6 +497,8 @@ Sensor
   replaced by ``pcr-scr`` (int type) to use encoded PCR register index and bit position macros.
   GIRQ configuration is now handled via the ``microchip,dmec-ecia-girq`` binding include
   (:github:`104808`).
+* :dtcompatible:`st,lps22hh` now ignores the ``odr`` property in favor of the one-shot sampling mode
+  unless :kconfig:option:`CONFIG_LPS22HH_TRIGGER` is enabled to make use of periodic sampling.
 
 * The devicetree compatible ``tdk,ntcg163jf103ft1`` has been renamed to
   :dtcompatible:`tdk,ntcgxx3jx103x` to reflect that the compensation values are identical for TDK
@@ -474,6 +560,17 @@ STM32
   boards which modified the ``interrupts`` property on either node must be updated
   to set the property on the top-level ``&radio`` node instead. (:github:`110546`)
 
+* Renamed ST gpio-nexus for camera and display connectors as follow:
+  ``st,dsi-lcd-qsh-030`` is renamed into :dtcompatible:`st,dsi-lcd-qsh-030-connector`
+  ``st,stm32-dcmi-camera-fpu-330zh`` is renamed into :dtcompatible:`st,dvp-cam-zif-30-connector`
+
+* :dtcompatible:`st,stm32-xspim` is now also used on STM32H5 and STM32H7RS series
+  to declare and configure XSPI Manager. Boards making use of XSPI must now enable
+  ``&xspim`` node in addition to the desired XSPI controller to use XSPI. (:github:`109903`)
+
+* STM32MP13 SoC DTSI ethernet: rename labels from ``mac:`` and ``mdio:`` to ``mac0:`` and
+  ``mdio0:``. The goal is to distinguish the 2 Ethernet controllers available. (:github:`108574`)
+
 Syscon
 ======
 
@@ -481,6 +578,19 @@ Syscon
   ``uint32_t`` for the register offset parameter instead of ``uint16_t``. This allows for
   larger register offsets. Code that explicitly declares ``uint16_t`` variables for the
   register parameter or implements the syscon driver API functions may need to be updated.
+
+Timer
+=====
+
+* :c:func:`sys_clock_set_timeout`, :c:func:`sys_clock_announce` and
+  :c:func:`sys_clock_announce_locked` now take their tick count as an unsigned
+  ``uint32_t`` rather than a signed ``int32_t``. Out-of-tree system timer drivers must
+  update their :c:func:`sys_clock_set_timeout` definition accordingly, otherwise the build
+  fails with a conflicting-types error. The kernel now also caps the requested timeout at
+  ``SYS_CLOCK_MAX_WAIT`` and no longer passes ``K_TICKS_FOREVER`` to the driver, so such
+  drivers no longer need to clamp the request against the :c:func:`sys_clock_announce`
+  range or special-case ``K_TICKS_FOREVER``; only their own hardware cycle-count limits
+  still need enforcing (:github:`111022`).
 
 USB
 ===
@@ -494,6 +604,21 @@ USB
   :c:struct:`usbd_vreq_node` are now called with NULL ``buf`` before data stage is received.
   This allows the stack to return STALL during data stage. Out-of-tree class and vendor handlers
   need to be updated. (:github:`108840`)
+* The Espressif USB-OTG full-speed controller compatible ``espressif,esp32-usb-otg`` has been
+  renamed to :dtcompatible:`espressif,esp32-usb-otg-fs`. The internal PHY D+/D- pad numbers are
+  now provided through the ``phy-dp-pin`` and ``phy-dm-pin`` properties. Out-of-tree devicetrees
+  using the old compatible must update the node compatible and add the two pin properties.
+
+Video
+=====
+
+* The :dtcompatible:`ovti,ov7670` and :dtcompatible:`ovti,ov7675` camera drivers now assume a
+  24 MHz XCLK input instead of the previous 6 MHz, matching the typical XCLK frequency listed in
+  the OV7670 datasheet. Boards driving an OV7670 or OV7675 sensor must update their board-level
+  XCLK clock configuration accordingly. For example, ``frdm_mcxn236`` has been switched from
+  ``kFRO12M_to_CLKOUT`` (divided by 2 to yield 6 MHz) to ``kFRO_HF_to_CLKOUT`` (divided by 2 to
+  yield 24 MHz), and ``frdm_mcxn947`` keeps ``kMAIN_CLK_to_CLKOUT`` but changes the CLKOUT
+  divider from 25 to 6 to yield 24 MHz. (:github:`109393`)
 
 WiFi
 ====
@@ -549,6 +674,27 @@ Bluetooth Audio
     :c:struct:`bt_bap_broadcast_source_subgroup_param`, then the parameter's pointer cannot be used
     to modify the ``codec_cfg``, and the actual definition of the struct should be modified instead.
     (:github:`104219`)
+  * All BAP roles now require :kconfig:option:`CONFIG_BT_AUDIO_CODEC_CFG_MAX_DATA_SIZE` to be at least
+    19 octets, as mandated by the BAP spec.
+    If :kconfig:option:`CONFIG_BT_AUDIO_CODEC_CFG_MAX_DATA_SIZE` is set to a lower value when used
+    with BAP, then applications need to set it to at least 19 octets. The following Kconfig options
+    are affected:
+
+    * :kconfig:option:`CONFIG_BT_ASCS`
+    * :kconfig:option:`CONFIG_BT_BAP_UNICAST_SERVER`
+    * :kconfig:option:`CONFIG_BT_BAP_UNICAST_CLIENT`
+    * :kconfig:option:`CONFIG_BT_BAP_BROADCAST_SOURCE`
+    * :kconfig:option:`CONFIG_BT_BAP_BROADCAST_SINK`
+    * :kconfig:option:`CONFIG_BT_BAP_SCAN_DELEGATOR`
+    * :kconfig:option:`CONFIG_BT_BAP_BROADCAST_ASSISTANT`
+
+    (:github:`107989`)
+  * :zephyr:code-sample:`bluetooth_bap_broadcast_assistant`,
+    :zephyr:code-sample:`bluetooth_bap_broadcast_sink`,
+    :zephyr:code-sample:`bluetooth_bap_broadcast_source`,
+    :zephyr:code-sample:`bluetooth_bap_unicast_client` and
+    :zephyr:code-sample:`bluetooth_bap_unicast_server` have been moved from
+    :zephyr_file:`samples/bluetooth/` to :zephyr_file:`samples/bluetooth/audio`.
 
 * CAP
 
@@ -563,6 +709,10 @@ Bluetooth Audio
     as :c:func:`bt_cap_commander_broadcast_reception_start` now ensures this when
     :c:member:`bt_cap_commander_cb.broadcast_reception_start` is called. This also applies for
     :c:func:`bt_cap_commander_broadcast_reception_stop` in a similar manner. (:github:`101070`)
+  * :zephyr:code-sample:`bluetooth_cap_acceptor`,
+    :zephyr:code-sample:`bluetooth_cap_handover` and
+    :zephyr:code-sample:`bluetooth_cap_initiator` have been moved from
+    ``samples/bluetooth/`` to ``samples/bluetooth/audio``.
 
 * CCP
 
@@ -580,6 +730,9 @@ Bluetooth Audio
     Additionally the ``BT_TBS_FEATURE_*`` macros have been changed to ``BT_TBS_OPTIONAL_OPCODE_*``.
     Applications can do a simple search-and-replace for ``BT_TBS_FEATURE_`` to
     ``BT_TBS_OPTIONAL_OPCODE_``. (:github:`103350`)
+  * :zephyr:code-sample:`bluetooth_ccp_call_control_client` and
+    :zephyr:code-sample:`bluetooth_ccp_call_control_server` have been moved from
+    ``samples/bluetooth/`` to ``samples/bluetooth/audio``.
 
 * CSIP
 
@@ -589,6 +742,25 @@ Bluetooth Audio
     * Coordinated Set Size → :kconfig:option:`CONFIG_BT_CSIP_SET_MEMBER_SIZE_SUPPORT`
     * Set Member Lock → :kconfig:option:`CONFIG_BT_CSIP_SET_MEMBER_LOCK_SUPPORT`
     * Set Member Rank → :kconfig:option:`CONFIG_BT_CSIP_SET_MEMBER_RANK_SUPPORT`
+
+* HAP
+
+  * :zephyr:code-sample:`bluetooth_hap_ha` has been moved from
+    ``samples/bluetooth/`` to ``samples/bluetooth/audio``.
+
+* PBP
+
+  * :zephyr:code-sample:`bluetooth_public_broadcast_sink` and
+    :zephyr:code-sample:`bluetooth_public_broadcast_source` have been moved from
+    ``samples/bluetooth/`` to ``samples/bluetooth/audio``.
+
+* TMAP
+
+  * :zephyr:code-sample:`ble_peripheral_tmap_bmr`,
+    :zephyr:code-sample:`ble_peripheral_tmap_bms`,
+    :zephyr:code-sample:`ble_peripheral_tmap_central` and
+    :zephyr:code-sample:`ble_peripheral_tmap_peripheral` have been moved from
+    ``samples/bluetooth/`` to ``samples/bluetooth/audio``.
 
 .. zephyr-keep-sorted-stop
 
@@ -625,6 +797,24 @@ Bluetooth HCI
   layer (e.g. the Bluetooth Host stack). For drivers that need access to any error from recv()
   (most don't) there's also a new :c:func:`bt_hci_recv_err` API that leaves the responsibility
   of unrefing the buffer to the caller in case of error situations.
+
+Bluetooth Host
+==============
+
+* The ``le_param_updated`` callback in :c:struct:`bt_conn_cb` is no longer invoked when a
+  connection parameter update fails (i.e. the LE Connection Update Complete event reports a
+  non-zero status). Previously it was called unconditionally, reporting the unchanged
+  connection parameters with no error indication, which could not be distinguished from a
+  successful update. Applications that need to be notified about rejected, application-initiated
+  parameter updates should enable :kconfig:option:`CONFIG_BT_USER_CONN_PARAM_REJECTED` and
+  implement the new ``le_param_update_rejected`` callback.
+
+Bluetooth Services
+==================
+
+* :kconfig:option:`CONFIG_BT_OTS_MAX_OBJ_CNT` has been changed from ``hex`` to ``int`` for a
+  more intuitive type.
+  Simply modify any hex values like ``0x30`` to their decimal values like ``48``.
 
 Networking
 **********
@@ -669,6 +859,43 @@ Networking
 * ``net_if_config_get`` was removed as it was a duplicate of :c:func:`net_if_get_config`.
   (:github:`110930`)
 
+* The number of ZVFS eventfd's is now determined by a ``ZVFS_EVENTFD_SIZE`` define
+  instead of using the :kconfig:option:`CONFIG_ZVFS_EVENTFD_MAX` Kconfig option directly.
+  Subsystems can specify their own eventfd count requirements by specifying Kconfig
+  options with the prefix ``CONFIG_ZVFS_EVENTFD_ADD_SIZE_``. These are summed together
+  and the result is compared against :kconfig:option:`CONFIG_ZVFS_EVENTFD_MAX`; the larger
+  of the two values is used. To force :kconfig:option:`CONFIG_ZVFS_EVENTFD_MAX` to be used,
+  even when its value is less than the sum of the custom requirements, a new
+  :kconfig:option:`CONFIG_ZVFS_EVENTFD_IGNORE_MIN` option has been introduced (which
+  defaults to being disabled). As a result, networking subsystems that allocate eventfds
+  (e.g. HTTP server, CoAP server, LwM2M, PTP, SSH, the socket service and the WPA
+  supplicant) no longer require the application to manually bump
+  :kconfig:option:`CONFIG_ZVFS_EVENTFD_MAX` to account for them. (:github:`111201`)
+
+* :kconfig:option:`CONFIG_NET_L2_PTP` has been deprecated and replaced by
+  :kconfig:option:`CONFIG_NET_L2_PTP_TIMESTAMPING`. The new option more accurately describes the
+  feature it enables. Applications or board configurations that explicitly enable
+  :kconfig:option:`CONFIG_NET_L2_PTP` should be updated to use
+  :kconfig:option:`CONFIG_NET_L2_PTP_TIMESTAMPING` instead.
+
+* The default WPA supplicant network selection criterion has changed from
+  throughput-based to reliability-based (SNR), switching the
+  :kconfig:option:`WIFI_NM_WPA_SUPPLICANT_NW_SEL` Kconfig default from
+  :kconfig:option:`CONFIG_WIFI_NM_WPA_SUPPLICANT_NW_SEL_THROUGHPUT` to
+  :kconfig:option:`CONFIG_WIFI_NM_WPA_SUPPLICANT_NW_SEL_RELIABILITY`.
+  Previously, SNR above 25 dBm was considered sufficient and largely excluded
+  from AP selection; SNR is now always factored in, improving connection stability
+  for embedded Wi-Fi use cases. Users who need the previous behaviour can restore it by enabling
+  :kconfig:option:`CONFIG_WIFI_NM_WPA_SUPPLICANT_NW_SEL_THROUGHPUT`.
+
+* LLMNR support has been deprecated. The Kconfig options
+  :kconfig:option:`CONFIG_LLMNR_RESOLVER` and
+  :kconfig:option:`CONFIG_LLMNR_RESPONDER` will be removed in a future release
+  (4.7 at the earliest). LLMNR (RFC 4795) is being retired by Microsoft and is
+  disabled by default on modern Windows. Applications that rely on local name
+  resolution should migrate to mDNS (:kconfig:option:`CONFIG_MDNS_RESOLVER` /
+  :kconfig:option:`CONFIG_MDNS_RESPONDER`).
+
 
 Ethernet
 ========
@@ -705,6 +932,21 @@ gPTP
 * Removed ``net_eth_get_ptp_port`` and ``net_eth_set_ptp_port``.
   New :c:func:`gptp_get_port_number` and :c:func:`gptp_set_port_number`
   can be used instead.
+
+Modem
+*****
+
+SIMCOM SIM7080
+==============
+
+* The Kconfig option :kconfig:option:`CONFIG_MODEM_SIMCOM_SIM7080_LTE_BANDS` has been split
+  into :kconfig:option:`CONFIG_MODEM_SIMCOM_SIM7080_LTE_BANDS_M1` and
+  :kconfig:option:`CONFIG_MODEM_SIMCOM_SIM7080_LTE_BANDS_NB1` since NB-IoT and CAT-M have
+  slightly different usable bands. The type of the newly introduced configuration values
+  is a hex bitmap of selected bands. By default bands 8, 20 and 28 are selected.
+
+  Applications configuring the :kconfig:option:`CONFIG_MODEM_SIMCOM_SIM7080_LTE_BANDS`
+  must update their configuration.
 
 LoRaWAN
 *******
@@ -775,6 +1017,15 @@ Random
 
 * ``CONFIG_CS_CTR_DRBG_PERSONALIZATION`` has been removed. It did not have any effect.
 
+Tools
+*****
+
+* The ``openocd`` runner now selects a debug adapter by serial number through the
+  canonical ``-i``/``--dev-id`` option, like the other runners. The previous
+  ``--serial`` option is deprecated and kept as an alias; it maps onto the same
+  mechanism (the value is still passed to the OpenOCD config as
+  ``_ZEPHYR_BOARD_SERIAL``). Update any scripts to use ``west flash -i <serial>``.
+
 Modules
 *******
 
@@ -823,3 +1074,9 @@ Architectures
 
 * ``xtensa_soc_mpu_ranges[]`` and ``xtensa_soc_mpu_ranges_num`` are removed. If SoC or board
   needs its own memory regions at boot, override :c:var:`xtensa_mpu_ranges` instead.
+
+* ``CONFIG_XTENSA_MPU_DEFAULT_MEM_TYPE`` is removed since memory types are now defined via
+  ``xtensa_mpu_mem_type_ranges[]``.
+
+* ``CONFIG_XTENSA_BACKTRACE_EXCEPTION_DUMP_HOOK`` is removed, since backtrace is now always
+  using :c:macro:`EXCEPTION_DUMP` for output.

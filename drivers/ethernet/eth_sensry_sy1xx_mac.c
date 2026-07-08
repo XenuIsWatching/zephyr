@@ -101,7 +101,6 @@ struct sy1xx_mac_dev_data {
 };
 
 /* prototypes */
-static int sy1xx_mac_set_mac_addr(const struct device *dev);
 static int sy1xx_mac_set_promiscuous_mode(const struct device *dev, bool promiscuous_mode);
 static int sy1xx_mac_set_config(const struct device *dev,
 				struct net_if *iface,
@@ -159,7 +158,6 @@ static void sy1xx_mac_set_mac_addr(const struct device *dev)
 {
 	struct sy1xx_mac_dev_config *cfg = (struct sy1xx_mac_dev_config *)dev->config;
 	struct sy1xx_mac_dev_data *data = (struct sy1xx_mac_dev_data *)dev->data;
-	int ret;
 	uint32_t v_low, v_high;
 
 	LOG_INF("%s set link address %02x:%02x:%02x:%02x:%02x:%02x", dev->name, data->mac_addr[0],

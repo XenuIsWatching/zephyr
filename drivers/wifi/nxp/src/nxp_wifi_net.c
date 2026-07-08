@@ -1004,7 +1004,7 @@ static void wifi_net_event_handler(struct net_mgmt_event_callback *cb, uint64_t 
 	case NET_EVENT_IPV6_DAD_SUCCEED:
 		net_d("Receive zephyr ipv6 dad finished event.");
 #if defined(CONFIG_NXP_WIFI_SOFTAP_SUPPORT) && !CONFIG_WIFI_NM_HOSTAPD_AP
-		/* Wi-Fi driver will recevie NET_EVENT_IPV6_DAD_SUCCEED from zephyr kernel after
+		/* Wi-Fi driver will receive NET_EVENT_IPV6_DAD_SUCCEED from zephyr kernel after
 		 * IPV6 DAD finished. Can notify wlcmgr_task task to get address.
 		 */
 		(void)wlan_wlcmgr_send_msg(WIFI_EVENT_UAP_NET_ADDR_CONFIG,
@@ -1115,6 +1115,10 @@ int net_configure_address(struct net_ip_config *addr, void *intrfc_handle)
 		 * DAD finished event from zephyr.
 		 */
 		net_if_dormant_off(if_handle->netif);
+#ifndef CONFIG_NXP_WIFI_IPV6
+		(void)wlan_wlcmgr_send_msg(WIFI_EVENT_UAP_NET_ADDR_CONFIG,
+					   WIFI_EVENT_REASON_SUCCESS, NULL);
+#endif
 	}
 #endif
 	else { /* Do Nothing */

@@ -36,6 +36,7 @@
 #include <zephyr/sys/sys_io.h>
 
 #include <zephyr/sys/util.h>
+#include <zephyr/sys/minmax.h>
 
 #if defined(CONFIG_I2C_DW_LPSS_DMA)
 #include <zephyr/drivers/dma.h>
@@ -375,7 +376,7 @@ static inline void i2c_dw_data_ask(const struct device *dev)
 
 	/* Figure out how many bytes we can request */
 	cnt = MIN(rx_buffer_depth, dw->request_bytes);
-	cnt = MIN(MIN(tx_empty, rx_empty), cnt);
+	cnt = min3(tx_empty, rx_empty, cnt);
 
 	while (cnt > 0) {
 		/* Tell controller to get another byte */
@@ -1459,8 +1460,6 @@ static int i2c_dw_initialize(const struct device *dev)
 	{                                                                                          \
 		BUILD_ASSERT(DT_INST_IRQN(n) == PCIE_IRQ_DETECT,                                   \
 			     "Only runtime IRQ configuration is supported");                       \
-		BUILD_ASSERT(IS_ENABLED(CONFIG_DYNAMIC_INTERRUPTS),                                \
-			     "DW I2C PCI needs CONFIG_DYNAMIC_INTERRUPTS");                        \
 		const struct i2c_dw_rom_config *const dev_cfg = port->config;                      \
 		unsigned int irq = pcie_alloc_irq(dev_cfg->pcie->bdf);                             \
 		if (irq == PCIE_CONF_INTR_IRQ_NONE) {                                              \

@@ -206,6 +206,12 @@ static size_t sl_802154_get_mhr_length(struct ieee802154_mhr *mhr)
 		length += sl_802154_get_aux_sec_hdr_bytes(mhr->aux_sec);
 	}
 
+	/* Derived from FindPayloadIndex in the openthread code base. */
+	if (mhr->fs->fc.frame_type == IEEE802154_FRAME_TYPE_MAC_COMMAND &&
+	    mhr->fs->fc.frame_version != IEEE802154_VERSION_802154) {
+		length += 1;
+	}
+
 	return length;
 }
 
@@ -1210,8 +1216,8 @@ static void sl_802154_handle_ack_timeout(struct sl_802154_data *data)
 	__ASSERT_NO_MSG(sl_802154_state_is_waiting_for_ack(&data->radio_data.state));
 	sl_802154_state_set_tx_data_ongoing(&data->radio_data.state, false);
 	sl_802154_state_set_waiting_for_ack(&data->radio_data.state, false);
+	data->ack_errno = -ENOMSG;
 	k_sem_give(&data->ack_wait);
-	data->tx_errno = -ENOMSG;
 	sl_802154_yield_radio(data->radio_data.rail_handle);
 	data->mac_data.em_pending_data = false;
 }
@@ -1347,8 +1353,8 @@ static void sl_802154_handle_rx_ack(const struct device *dev, uint16_t length,
 ack_write_fail:
 	net_pkt_unref(ack_pkt);
 ack_alloc_fail:
+	data->ack_errno = 0;
 	k_sem_give(&data->ack_wait);
-	data->tx_errno = 0;
 	sl_802154_state_clear_tx_data_and_wait_for_ack(&data->radio_data.state);
 	if (tx_is_data_request && data->rx_mhr.fs->fc.frame_pending) {
 		data->mac_data.em_pending_data = true;
@@ -1515,8 +1521,8 @@ static void sl_802154_handle_tx_completion(struct sl_802154_data *data, sl_rail_
 			} else {
 				sl_802154_state_set_tx_data_ongoing(&data->radio_data.state, false);
 				(void)sl_802154_yield_radio(data->radio_data.rail_handle);
-				data->tx_errno = 0;
 			}
+			data->tx_errno = 0;
 		}
 	}
 	if (events & SL_RAIL_EVENT_TX_CHANNEL_BUSY) {
@@ -1984,10 +1990,7 @@ static int silabs_efr32_filter(const struct device *dev, bool set, enum ieee8021
 {
 	struct sl_802154_data *data = dev->data;
 
-	if (!set) {
-		return -ENOTSUP;
-	}
-	if (filter == NULL) {
+	if (set && filter == NULL) {
 		return -EINVAL;
 	}
 	if (!data->radio_data.rail_initialized) {
@@ -1995,17 +1998,22 @@ static int silabs_efr32_filter(const struct device *dev, bool set, enum ieee8021
 	}
 	switch (type) {
 	case IEEE802154_FILTER_TYPE_PAN_ID:
-		data->pan_id = filter->pan_id;
+		data->pan_id = set ? filter->pan_id : IEEE802154_BROADCAST_PAN_ID;
 		sl_rail_ieee802154_set_pan_id(data->radio_data.rail_handle, filter->pan_id, 0);
 		break;
 	case IEEE802154_FILTER_TYPE_SHORT_ADDR:
-		data->short_addr = filter->short_addr;
+		data->short_addr = set ? filter->short_addr : IEEE802154_NO_SHORT_ADDRESS_ASSIGNED;
 		sl_rail_ieee802154_set_short_address(data->radio_data.rail_handle,
 						     filter->short_addr, 0);
 		break;
 	case IEEE802154_FILTER_TYPE_IEEE_ADDR:
-		sys_memcpy_swap(data->ext_addr, filter->ieee_addr, IEEE802154_EXT_ADDR_LENGTH);
-		sl_rail_ieee802154_set_long_address(data->radio_data.rail_handle, filter->ieee_addr,
+		uint8_t long_addr[8] = {0};
+
+		if (set) {
+			memcpy(long_addr, filter->ieee_addr, sizeof(long_addr));
+		}
+		sys_memcpy_swap(data->ext_addr, long_addr, IEEE802154_EXT_ADDR_LENGTH);
+		sl_rail_ieee802154_set_long_address(data->radio_data.rail_handle, long_addr,
 						    0);
 		break;
 	default:
@@ -2084,6 +2092,7 @@ static int silabs_efr32_tx(const struct device *dev, enum ieee802154_tx_mode mod
 	int sec_ret;
 	uint32_t sym_rate;
 	uint32_t bit_rate;
+	uint16_t num_written;
 
 	if (!data->radio_data.rail_initialized) {
 		return -ENOTSUP;
@@ -2113,12 +2122,25 @@ static int silabs_efr32_tx(const struct device *dev, enum ieee802154_tx_mode mod
 	/* PHR (first byte) = PSDU length (MPDU + CRC); then write MPDU
 	 * RAIL appends the CRC in hardware.
 	 */
-	(void)sl_rail_write_tx_fifo(data->radio_data.rail_handle, &len, sizeof(len), true);
-	(void)sl_rail_write_tx_fifo(data->radio_data.rail_handle, data->tx_buffer, frag->len,
-				    false);
+	num_written = sl_rail_write_tx_fifo(data->radio_data.rail_handle, &len, sizeof(len), true);
+	if (num_written != sizeof(len)) {
+		LOG_WRN("Failed to write length to tx fifo");
+		sl_802154_handle_tx_failed(data);
+		return -ENOMEM;
+	}
+
+	num_written = sl_rail_write_tx_fifo(data->radio_data.rail_handle, data->tx_buffer,
+					    frag->len, false);
+	if (num_written != frag->len) {
+		LOG_WRN("Failed to write fragment data to tx fifo");
+		sl_802154_handle_tx_failed(data);
+		return -ENOMEM;
+	}
+
 	k_sem_reset(&data->tx_wait);
 	k_sem_reset(&data->ack_wait);
-	data->tx_errno = -EIO; /* default if no event fires */
+	data->tx_errno = -EIO;  /* default if no event fires */
+	data->ack_errno = -EIO; /* default if no event fires */
 
 	if (data->tx_mhr.fs->fc.ar) {
 		tx_options |= SL_RAIL_TX_OPTION_WAIT_FOR_ACK;
@@ -2186,11 +2208,18 @@ static int silabs_efr32_tx(const struct device *dev, enum ieee802154_tx_mode mod
 
 	/* Block until RAIL events callback sets tx_errno and gives tx_wait. */
 	k_sem_take(&data->tx_wait, K_FOREVER);
+	if (data->tx_errno) {
+		return data->tx_errno;
+	}
 
 	if (data->tx_mhr.fs->fc.ar) {
 		k_sem_take(&data->ack_wait, K_FOREVER);
+		if (data->ack_errno) {
+			return data->ack_errno;
+		}
 	}
-	return data->tx_errno;
+
+	return 0;
 }
 
 static int silabs_efr32_energy_scan_start(const struct device *dev, uint16_t duration,
@@ -2501,11 +2530,19 @@ static int silabs_efr32_continuous_carrier(const struct device *dev)
 	struct sl_802154_data *data = dev->data;
 	sl_rail_status_t ret;
 
+	/* Check if the driver is already in TESTING state */
+	if (data->testing == true) {
+		return -EALREADY;
+	}
+
 	ret = sl_rail_start_tx_stream(data->radio_data.rail_handle, data->current_channel,
 				      SL_RAIL_STREAM_CARRIER_WAVE, tx_options);
 	if (ret != SL_RAIL_STATUS_NO_ERROR) {
 		return -EIO;
 	}
+	/* Update driver state */
+	data->testing = true;
+
 	return 0;
 }
 

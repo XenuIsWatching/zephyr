@@ -112,31 +112,34 @@ static enum ethernet_hw_caps dwmac_caps(const struct device *dev, struct net_if 
 
 	caps |= ETHERNET_PROMISC_MODE;
 
+#ifdef CONFIG_NET_VLAN
+	caps |= ETHERNET_HW_VLAN;
+#endif
+
 	return caps;
 }
 
 /* for debug logs */
-static inline int net_pkt_get_nbfrags(struct net_pkt *pkt)
+static __maybe_unused unsigned int net_pkt_get_nbfrags(struct net_pkt *pkt)
 {
-	struct net_buf *frag;
-	int nbfrags = 0;
+	unsigned int nbfrags = 0U;
 
-	for (frag = pkt->buffer; frag; frag = frag->frags) {
+	NET_PKT_FRAG_FOR_EACH(pkt, frag) {
 		nbfrags++;
 	}
+
 	return nbfrags;
 }
 
 static int dwmac_send(const struct device *dev, struct net_pkt *pkt)
 {
 	struct dwmac_priv *p = dev->data;
-	struct net_buf *frag;
 	unsigned int pkt_len = net_pkt_get_len(pkt);
 	unsigned int d_idx;
 	struct dwmac_dma_desc *d;
 	uint32_t des2_flags, des3_flags;
 
-	LOG_DBG("pkt len/frags=%d/%d", pkt_len, net_pkt_get_nbfrags(pkt));
+	LOG_DBG("pkt len/frags=%u/%u", pkt_len, net_pkt_get_nbfrags(pkt));
 
 	/* initial flag values */
 	des2_flags = 0;
@@ -144,8 +147,7 @@ static int dwmac_send(const struct device *dev, struct net_pkt *pkt)
 
 	/* map packet fragments */
 	d_idx = p->tx_desc_head;
-	frag = pkt->buffer;
-	do {
+	NET_PKT_FRAG_FOR_EACH(pkt, frag) {
 		LOG_DBG("desc sem/head/tail=%d/%d/%d",
 			k_sem_count_get(&p->free_tx_descs),
 			p->tx_desc_head, p->tx_desc_tail);
@@ -181,8 +183,7 @@ static int dwmac_send(const struct device *dev, struct net_pkt *pkt)
 		des3_flags &= ~TDES3_FD;
 
 		INC_WRAP(d_idx, NB_TX_DESCS);
-		frag = frag->frags;
-	} while (frag);
+	};
 
 	/* make sure all the above made it to memory */
 	barrier_dmem_fence_full();
@@ -199,8 +200,7 @@ abort:
 	while (d_idx != p->tx_desc_head) {
 		/* release already prepared fragments */
 		DEC_WRAP(d_idx, NB_TX_DESCS);
-		frag = p->tx_frags[d_idx];
-		net_pkt_frag_unref(frag);
+		net_pkt_frag_unref(p->tx_frags[d_idx]);
 		k_sem_give(&p->free_tx_descs);
 	}
 	return -ENOMEM;
@@ -251,8 +251,9 @@ static void dwmac_receive(struct dwmac_priv *p)
 {
 	struct dwmac_dma_desc *d;
 	struct net_buf *frag;
-	unsigned int d_idx, bytes_so_far;
+	unsigned int d_idx;
 	uint32_t des3_val;
+	uint16_t bytes_so_far;
 
 	for (d_idx = p->rx_desc_tail;
 	     d_idx != p->rx_desc_head;
@@ -547,11 +548,9 @@ static void phy_link_state_changed(const struct device *phy_dev,
 		}
 
 		REG_WRITE(MAC_CONF, reg_val);
-
-		net_eth_carrier_on(p->iface);
-	} else {
-		net_eth_carrier_off(p->iface);
 	}
+
+	net_eth_carrier_set(p->iface, state->is_up);
 }
 
 static const struct device *dwmac_get_phy(const struct device *dev, struct net_if *iface __unused)
@@ -695,10 +694,22 @@ int dwmac_probe(const struct device *dev)
 	return 0;
 }
 
+#if defined(CONFIG_NET_STATISTICS_ETHERNET)
+static struct net_stats_eth *dwmac_stats(const struct device *dev, struct net_if *iface __unused)
+{
+	struct dwmac_priv *p = dev->data;
+
+	return &p->stats;
+}
+#endif
+
 const struct ethernet_api dwmac_api = {
 	.iface_api.init		= dwmac_iface_init,
 	.get_capabilities	= dwmac_caps,
 	.set_config		= dwmac_set_config,
 	.get_phy		= dwmac_get_phy,
 	.send			= dwmac_send,
+#if defined(CONFIG_NET_STATISTICS_ETHERNET)
+	.get_stats		= dwmac_stats,
+#endif
 };

@@ -2088,7 +2088,7 @@ static inline k_ticks_t z_impl_k_timer_remaining_ticks(
  */
 static inline uint32_t k_timer_remaining_get(struct k_timer *timer)
 {
-	return k_ticks_to_ms_floor32(k_timer_remaining_ticks(timer));
+	return k_ticks_to_ms_ceil32(k_timer_remaining_ticks(timer));
 }
 
 #endif /* CONFIG_SYS_CLOCK_EXISTS */
@@ -2795,7 +2795,8 @@ __syscall uint32_t k_event_set_masked(struct k_event *event, uint32_t events,
  * @param event Address of the event object
  * @param events Set of events to clear in @a event
  *
- * @return Previous value of the events in @a event
+ * @return Previous state of the events specified by @a events (any events
+ *         not selected by @a events are not reported)
  */
 __syscall uint32_t k_event_clear(struct k_event *event, uint32_t events);
 
@@ -4801,7 +4802,7 @@ struct k_work_q {
  * @cond INTERNAL_HIDDEN
  */
 	/* The thread that animates the work. */
-	struct k_thread thread;
+	__deprecated struct k_thread thread;
 
 	/* The thread ID that animates the work. This may be an external thread
 	 * if k_work_queue_run() is used.

@@ -74,6 +74,24 @@
 			#power-domain-cells = <0>;
 		};
 
+		main_epwm0_pd: power-domain@28 {
+			compatible = "arm,scmi-power-domain";
+			reg = <40>;
+			#power-domain-cells = <0>;
+		};
+
+		main_epwm1_pd: power-domain@29 {
+			compatible = "arm,scmi-power-domain";
+			reg = <41>;
+			#power-domain-cells = <0>;
+		};
+
+		main_epwm2_pd: power-domain@2a {
+			compatible = "arm,scmi-power-domain";
+			reg = <42>;
+			#power-domain-cells = <0>;
+		};
+
 		main_spi3_pd: power-domain@4b {
 			compatible = "arm,scmi-power-domain";
 			reg = <75>;
@@ -125,6 +143,24 @@
 		main_timer3_pd: power-domain@12 {
 			compatible = "arm,scmi-power-domain";
 			reg = <18>;
+			#power-domain-cells = <0>;
+		};
+
+		main_mmcsd0_pd: power-domain@1c {
+			compatible = "arm,scmi-power-domain";
+			reg = <28>;
+			#power-domain-cells = <0>;
+		};
+
+		main_mmcsd1_pd: power-domain@1a {
+			compatible = "arm,scmi-power-domain";
+			reg = <26>;
+			#power-domain-cells = <0>;
+		};
+
+		main_mmcsd2_pd: power-domain@1b {
+			compatible = "arm,scmi-power-domain";
+			reg = <27>;
 			#power-domain-cells = <0>;
 		};
 	};

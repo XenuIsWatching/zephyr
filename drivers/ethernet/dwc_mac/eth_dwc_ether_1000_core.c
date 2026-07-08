@@ -34,6 +34,7 @@ LOG_MODULE_REGISTER(dwmac_core, CONFIG_ETHERNET_LOG_LEVEL);
 #define TDES0_FS  BIT(28)
 #define TDES0_TCH BIT(20)
 #define TDES0_ES  BIT(15)
+#define TDES0_CIC GENMASK(23, 22)
 
 #define TDES1_TBS1 GENMASK(12, 0)
 
@@ -63,6 +64,15 @@ static enum ethernet_hw_caps dwmac_caps(const struct device *dev __unused,
 #ifdef CONFIG_NET_PROMISCUOUS_MODE
 	       | ETHERNET_PROMISC_MODE
 #endif
+#ifdef CONFIG_NET_VLAN
+	       | ETHERNET_HW_VLAN
+#endif
+#ifdef CONFIG_ETH_DWC_ETHER_RX_HW_CHECKSUM
+	       | ETHERNET_HW_RX_CHKSUM_OFFLOAD
+#endif
+#ifdef CONFIG_ETH_DWC_ETHER_TX_HW_CHECKSUM
+	       | ETHERNET_HW_TX_CHKSUM_OFFLOAD
+#endif
 		;
 }
 
@@ -77,6 +87,9 @@ static __maybe_unused unsigned int net_pkt_get_nbfrags(struct net_pkt *pkt)
 	return nbfrags;
 }
 
+#define TDES0_FLAGS_DEFAULT (TDES0_TCH | TDES0_IC | \
+	(IS_ENABLED(CONFIG_ETH_DWC_ETHER_TX_HW_CHECKSUM) ? TDES0_CIC : 0U))
+
 static int dwmac_send(const struct device *dev, struct net_pkt *pkt)
 {
 	struct dwmac_priv *p = dev->data;
@@ -87,7 +100,7 @@ static int dwmac_send(const struct device *dev, struct net_pkt *pkt)
 	LOG_DBG("pkt len/frags=%zu/%u", net_pkt_get_len(pkt), net_pkt_get_nbfrags(pkt));
 
 	d_idx = p->tx_desc_head;
-	des0_flags = TDES0_TCH | TDES0_IC;
+	des0_flags = TDES0_FLAGS_DEFAULT;
 
 	NET_PKT_FRAG_FOR_EACH(pkt, frag) {
 		if (k_sem_take(&p->free_tx_descs, TX_AVAIL_WAIT) != 0) {
@@ -97,26 +110,25 @@ static int dwmac_send(const struct device *dev, struct net_pkt *pkt)
 
 		net_pkt_frag_ref(frag);
 		sys_cache_data_flush_range(frag->data, frag->len);
+		p->tx_frags[d_idx] = frag;
 
 		d = &p->tx_descs[d_idx];
 		d->des0 = des0_flags;
 		d->des1 = FIELD_PREP(TDES1_TBS1, frag->len);
 		d->des2 = phys_lo32(frag->data);
-		/* track the net_buf associated with this desc for later release */
-		d->frag = frag;
 
 		if (!frag->frags) {
 			d->des0 |= TDES0_LS;
 		}
 
-		des0_flags = TDES0_OWN | TDES0_TCH | TDES0_IC;
+		des0_flags = TDES0_OWN | TDES0_FLAGS_DEFAULT;
 		INC_WRAP(d_idx, NB_TX_DESCS);
 	};
 
 	barrier_dmem_fence_full();
 
 	d = &p->tx_descs[p->tx_desc_head];
-	d->des0 = TDES0_OWN | TDES0_FS | TDES0_TCH | TDES0_IC;
+	d->des0 |= TDES0_OWN | TDES0_FS;
 
 	barrier_dmem_fence_full();
 	p->tx_desc_head = d_idx;
@@ -127,8 +139,7 @@ static int dwmac_send(const struct device *dev, struct net_pkt *pkt)
 abort:
 	while (d_idx != p->tx_desc_head) {
 		DEC_WRAP(d_idx, NB_TX_DESCS);
-		d = &p->tx_descs[d_idx];
-		net_pkt_frag_unref(d->frag);
+		net_pkt_frag_unref(p->tx_frags[d_idx]);
 		k_sem_give(&p->free_tx_descs);
 	}
 
@@ -151,7 +162,7 @@ static void dwmac_tx_release(const struct device *dev)
 			break;
 		}
 
-		frag = d->frag;
+		frag = p->tx_frags[d_idx];
 		net_pkt_frag_unref(frag);
 
 		if ((des0 & TDES0_LS) != 0U && (des0 & TDES0_ES) != 0U) {
@@ -173,8 +184,6 @@ static void dwmac_receive(const struct device *dev)
 	unsigned int d_idx;
 	uint32_t des0;
 	uint16_t bytes_so_far;
-	struct net_pkt *rx_pkt = NULL;
-	uint16_t rx_bytes = 0;
 
 	for (d_idx = p->rx_desc_tail; d_idx != p->rx_desc_head;
 	     INC_WRAP(d_idx, NB_RX_DESCS), k_sem_give(&p->free_rx_descs)) {
@@ -186,48 +195,49 @@ static void dwmac_receive(const struct device *dev)
 		}
 
 		if ((des0 & RDES0_FS) != 0U) {
-			rx_bytes = 0;
-			if (rx_pkt != NULL) {
+			p->rx_bytes = 0;
+			if (p->rx_pkt != NULL) {
 				eth_stats_update_errors_rx(p->iface);
-				net_pkt_unref(rx_pkt);
+				net_pkt_unref(p->rx_pkt);
 			}
-			rx_pkt = net_pkt_rx_alloc_on_iface(p->iface, K_NO_WAIT);
-			if (rx_pkt == NULL) {
+			p->rx_pkt = net_pkt_rx_alloc_on_iface(p->iface, K_NO_WAIT);
+			if (p->rx_pkt == NULL) {
 				eth_stats_update_errors_rx(p->iface);
 			}
 		}
 
-		if (rx_pkt == NULL) {
+		if (p->rx_pkt == NULL) {
 			continue;
 		}
 
-		frag = d->frag;
-		d->frag = NULL;
+		frag = p->rx_frags[d_idx];
+		p->rx_frags[d_idx] = NULL;
+
 		sys_cache_data_invd_range(frag->data, frag->size);
 
 		bytes_so_far = RX_LEN_FROM_RDES0(des0);
 
-		if (bytes_so_far < rx_bytes) {
+		if (bytes_so_far < p->rx_bytes) {
 			eth_stats_update_errors_rx(p->iface);
-			net_pkt_unref(rx_pkt);
-			rx_pkt = NULL;
+			net_pkt_unref(p->rx_pkt);
+			p->rx_pkt = NULL;
 			net_buf_unref(frag);
 			continue;
 		}
 
-		frag->len = bytes_so_far - rx_bytes;
-		rx_bytes = bytes_so_far;
-		net_pkt_frag_add(rx_pkt, frag);
+		frag->len = bytes_so_far - p->rx_bytes;
+		p->rx_bytes = bytes_so_far;
+		net_pkt_frag_add(p->rx_pkt, frag);
 
 		if ((des0 & RDES0_LS) != 0U) {
 			if ((des0 & RDES0_ES) == 0U) {
-				net_recv_data(p->iface, rx_pkt);
+				net_recv_data(p->iface, p->rx_pkt);
 			} else {
 				LOG_ERR("rx error (DES0 = 0x%08x)", des0);
 				eth_stats_update_errors_rx(p->iface);
-				net_pkt_unref(rx_pkt);
+				net_pkt_unref(p->rx_pkt);
 			}
-			rx_pkt = NULL;
+			p->rx_pkt = NULL;
 		}
 	}
 
@@ -243,7 +253,7 @@ static void dwmac_rx_refill(const struct device *dev, unsigned int d_idx)
 	d = &p->rx_descs[d_idx];
 	__ASSERT(!(d->des0 & RDES0_OWN), "rx desc still owned");
 
-	frag = d->frag;
+	frag = p->rx_frags[d_idx];
 	if (frag == NULL) {
 		frag = net_pkt_get_reserve_rx_data(RX_FRAG_SIZE, K_FOREVER);
 		if (frag == NULL) {
@@ -251,7 +261,7 @@ static void dwmac_rx_refill(const struct device *dev, unsigned int d_idx)
 			return;
 		}
 		__ASSERT_NO_MSG(frag->size == RX_FRAG_SIZE);
-		d->frag = frag;
+		p->rx_frags[d_idx] = frag;
 	}
 
 	d->des1 = FIELD_PREP(RDES1_RBS1, frag->size) | RDES1_RCH;
@@ -363,11 +373,9 @@ static void phy_link_state_changed(const struct device *phy_dev __unused,
 		}
 
 		REG_WRITE(DWMAC_MACCR, reg);
-
-		net_eth_carrier_on(p->iface);
-	} else {
-		net_eth_carrier_off(p->iface);
 	}
+
+	net_eth_carrier_set(p->iface, state->is_up);
 }
 
 static const struct device *dwmac_get_phy(const struct device *dev, struct net_if *iface __unused)
@@ -439,8 +447,12 @@ int dwmac_probe(const struct device *dev)
 		}
 	}
 
-	reg_val = REG_READ(MAC_VERSION);
+	reg_val = REG_READ(DWMAC_MACVERR);
 	LOG_INF("HW version %u.%u0", (reg_val >> 4) & 0xf, reg_val & 0xf);
+
+	/* get configured hardware features */
+	p->feature0 = REG_READ(DWMAC_HWFR);
+	LOG_DBG("hw_feature: 0x%08x", p->feature0);
 
 	ret = dwmac_platform_init(dev);
 	if (ret < 0) {
@@ -460,12 +472,29 @@ int dwmac_probe(const struct device *dev)
 		p->rx_descs[i].des3 = RXDESC_PHYS_L((i + 1) % NB_RX_DESCS);
 	}
 
+	if (IS_ENABLED(CONFIG_ETH_DWC_ETHER_1000_CORE_EDFE)) {
+		REG_WRITE(DWMAC_DMABMR, REG_READ(DWMAC_DMABMR) | DWMAC_DMABMR_EDFE);
+	}
+
 	REG_WRITE(DWMAC_DMATDLAR, TXDESC_PHYS_L(0));
 	REG_WRITE(DWMAC_DMARDLAR, RXDESC_PHYS_L(0));
 	REG_WRITE(DWMAC_DMAOMR, DWMAC_DMAOMR_TSF | DWMAC_DMAOMR_RSF);
 
+	if (IS_ENABLED(CONFIG_ETH_DWC_ETHER_RX_HW_CHECKSUM)) {
+		REG_WRITE(DWMAC_MACCR, REG_READ(DWMAC_MACCR) | DWMAC_MACCR_IPCO);
+	}
+
 	return 0;
 }
+
+#if defined(CONFIG_NET_STATISTICS_ETHERNET)
+static struct net_stats_eth *dwmac_stats(const struct device *dev, struct net_if *iface __unused)
+{
+	struct dwmac_priv *p = dev->data;
+
+	return &p->stats;
+}
+#endif
 
 const struct ethernet_api dwmac_api = {
 	.iface_api.init = dwmac_iface_init,
@@ -473,4 +502,7 @@ const struct ethernet_api dwmac_api = {
 	.set_config = dwmac_set_config,
 	.get_phy = dwmac_get_phy,
 	.send = dwmac_send,
+#if defined(CONFIG_NET_STATISTICS_ETHERNET)
+	.get_stats = dwmac_stats,
+#endif
 };

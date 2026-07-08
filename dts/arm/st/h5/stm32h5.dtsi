@@ -32,6 +32,8 @@
 			compatible = "arm,cortex-m33";
 			reg = <0>;
 			cpu-power-states = <&stop>;
+			d-cache-line-size = <16>;
+			i-cache-line-size = <16>;
 			#address-cells = <1>;
 			#size-cells = <1>;
 
@@ -269,7 +271,7 @@
 		};
 
 		lptim1: timers@44004400 {
-			compatible = "st,stm32-lptim";
+			compatible = "st,stm32u5-lptim", "st,stm32-lptim";
 			clocks = <&rcc STM32_CLOCK(APB3, 11)>;
 			resets = <&rctl STM32_RESET(APB3, 11)>;
 			#address-cells = <1>;
@@ -281,7 +283,7 @@
 		};
 
 		lptim2: timers@40009400 {
-			compatible = "st,stm32-lptim";
+			compatible = "st,stm32u5-lptim", "st,stm32-lptim";
 			clocks = <&rcc STM32_CLOCK(APB1_2, 5)>;
 			resets = <&rctl STM32_RESET(APB1H, 5)>;
 			#address-cells = <1>;
@@ -401,6 +403,7 @@
 			counter {
 				compatible = "st,stm32-counter";
 				status = "disabled";
+				#counter-capture-cells = <2>;
 			};
 		};
 
@@ -423,6 +426,7 @@
 			counter {
 				compatible = "st,stm32-counter";
 				status = "disabled";
+				#counter-capture-cells = <2>;
 			};
 		};
 
@@ -445,6 +449,7 @@
 			counter {
 				compatible = "st,stm32-counter";
 				status = "disabled";
+				#counter-capture-cells = <2>;
 			};
 		};
 
@@ -467,6 +472,7 @@
 			counter {
 				compatible = "st,stm32-counter";
 				status = "disabled";
+				#counter-capture-cells = <2>;
 			};
 		};
 
@@ -489,6 +495,7 @@
 			counter {
 				compatible = "st,stm32-counter";
 				status = "disabled";
+				#counter-capture-cells = <2>;
 			};
 		};
 
